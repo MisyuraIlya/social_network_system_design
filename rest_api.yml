@@ -1,667 +1,238 @@
 openapi: 3.0.4
 info:
-  title: Swagger Petstore - OpenAPI 3.0
-  description: |-
-    This is a sample Pet Store Server based on the OpenAPI 3.0 specification.  You can find out more about
-    Swagger at [https://swagger.io](https://swagger.io). In the third iteration of the pet store, we've switched to the design first approach!
-    You can now help us improve the API whether it's by making changes to the definition itself or to the code.
-    That way, with time, we can improve the API in general, and expose some of the new features in OAS3.
-
-    Some useful links:
-    - [The Pet Store repository](https://github.com/swagger-api/swagger-petstore)
-    - [The source API definition for the Pet Store](https://github.com/swagger-api/swagger-petstore/blob/master/src/main/resources/openapi.yaml)
-  termsOfService: https://swagger.io/terms/
-  contact:
-    email: apiteam@swagger.io
-  license:
-    name: Apache 2.0
-    url: https://www.apache.org/licenses/LICENSE-2.0.html
-  version: 1.0.12
-externalDocs:
-  description: Find out more about Swagger
-  url: https://swagger.io
+  title: Social Network API
+  description: |
+    This is an example of a simple social network API that allows:
+    - Managing friend relationships (adding/removing).
+    - Viewing user friends.
+    - Viewing user profiles.
+    - Publishing posts (with optional media attachments).
+    - Viewing feeds (home feed and user feed).
+    - Viewing user dialogs/chats.
+    - Sending and reading messages.
+  version: 1.0.0
 servers:
-  - url: https://petstore3.swagger.io/api/v3
+  - url: https://api.example.com/v1
 tags:
-  - name: pet
-    description: Everything about your Pets
-    externalDocs:
-      description: Find out more
-      url: https://swagger.io
-  - name: store
-    description: Access to Petstore orders
-    externalDocs:
-      description: Find out more about our store
-      url: https://swagger.io
-  - name: user
-    description: Operations about user
+  - name: User
+    description: Operations related to user profiles
+  - name: Friend
+    description: Operations related to adding/removing friends
+  - name: Post
+    description: Operations related to posts and feeds
+  - name: Media
+    description: Operations related to uploading media for posts
+  - name: Chat
+    description: Operations related to chats and messages
+  - name: Message
+    description: Operations related to sending and reading messages
+
 paths:
-  /pet:
-    put:
+
+  ###############################################################
+  #                      USER ENDPOINTS                         #
+  ###############################################################
+  /users/{userId}:
+    get:
       tags:
-        - pet
-      summary: Update an existing pet.
-      description: Update an existing pet by Id.
-      operationId: updatePet
+        - User
+      summary: Get user profile
+      description: Returns a single user's profile information.
+      operationId: getUserProfile
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          description: The ID of the user to retrieve
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successfully retrieved user profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '404':
+          description: User not found
+        default:
+          description: Unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  ###############################################################
+  #                   FRIEND ENDPOINTS                          #
+  ###############################################################
+  /friends:
+    post:
+      tags:
+        - Friend
+      summary: Add a friend
+      description: Sends a friend request or immediately adds a user as a friend (depending on your logic).
+      operationId: addFriend
       requestBody:
-        description: Update an existent pet in the store
+        description: Friend object containing user IDs or friend details
+        required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/Pet'
-          application/xml:
-            schema:
-              $ref: '#/components/schemas/Pet'
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/Pet'
-        required: true
+              $ref: '#/components/schemas/Friend'
       responses:
-        '200':
-          description: Successful operation
+        '201':
+          description: Friend added successfully
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Pet'
-            application/xml:
-              schema:
-                $ref: '#/components/schemas/Pet'
+                $ref: '#/components/schemas/Friend'
         '400':
-          description: Invalid ID supplied
-        '404':
-          description: Pet not found
-        '422':
-          description: Validation exception
+          description: Invalid friend data
         default:
           description: Unexpected error
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
-      security:
-        - petstore_auth:
-            - write:pets
-            - read:pets
-    post:
-      tags:
-        - pet
-      summary: Add a new pet to the store.
-      description: Add a new pet to the store.
-      operationId: addPet
-      requestBody:
-        description: Create a new pet in the store
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/Pet'
-          application/xml:
-            schema:
-              $ref: '#/components/schemas/Pet'
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/Pet'
-        required: true
-      responses:
-        '200':
-          description: Successful operation
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Pet'
-            application/xml:
-              schema:
-                $ref: '#/components/schemas/Pet'
-        '400':
-          description: Invalid input
-        '422':
-          description: Validation exception
-        default:
-          description: Unexpected error
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-      security:
-        - petstore_auth:
-            - write:pets
-            - read:pets
-  /pet/findByStatus:
-    get:
-      tags:
-        - pet
-      summary: Finds Pets by status.
-      description: Multiple status values can be provided with comma separated strings.
-      operationId: findPetsByStatus
-      parameters:
-        - name: status
-          in: query
-          description: Status values that need to be considered for filter
-          required: false
-          explode: true
-          schema:
-            type: string
-            default: available
-            enum:
-              - available
-              - pending
-              - sold
-      responses:
-        '200':
-          description: successful operation
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Pet'
-            application/xml:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Pet'
-        '400':
-          description: Invalid status value
-        default:
-          description: Unexpected error
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-      security:
-        - petstore_auth:
-            - write:pets
-            - read:pets
-  /pet/findByTags:
-    get:
-      tags:
-        - pet
-      summary: Finds Pets by tags.
-      description: Multiple tags can be provided with comma separated strings. Use tag1, tag2, tag3 for testing.
-      operationId: findPetsByTags
-      parameters:
-        - name: tags
-          in: query
-          description: Tags to filter by
-          required: false
-          explode: true
-          schema:
-            type: array
-            items:
-              type: string
-      responses:
-        '200':
-          description: successful operation
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Pet'
-            application/xml:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Pet'
-        '400':
-          description: Invalid tag value
-        default:
-          description: Unexpected error
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-      security:
-        - petstore_auth:
-            - write:pets
-            - read:pets
-  /pet/{petId}:
-    get:
-      tags:
-        - pet
-      summary: Find pet by ID.
-      description: Returns a single pet.
-      operationId: getPetById
-      parameters:
-        - name: petId
-          in: path
-          description: ID of pet to return
-          required: true
-          schema:
-            type: integer
-            format: int64
-      responses:
-        '200':
-          description: successful operation
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Pet'
-            application/xml:
-              schema:
-                $ref: '#/components/schemas/Pet'
-        '400':
-          description: Invalid ID supplied
-        '404':
-          description: Pet not found
-        default:
-          description: Unexpected error
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-      security:
-        - api_key: []
-        - petstore_auth:
-            - write:pets
-            - read:pets
-    post:
-      tags:
-        - pet
-      summary: Updates a pet in the store with form data.
-      description: Updates a pet resource based on the form data.
-      operationId: updatePetWithForm
-      parameters:
-        - name: petId
-          in: path
-          description: ID of pet that needs to be updated
-          required: true
-          schema:
-            type: integer
-            format: int64
-        - name: name
-          in: query
-          description: Name of pet that needs to be updated
-          schema:
-            type: string
-        - name: status
-          in: query
-          description: Status of pet that needs to be updated
-          schema:
-            type: string
-      responses:
-        '200':
-          description: successful operation
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Pet'
-            application/xml:
-              schema:
-                $ref: '#/components/schemas/Pet'
-        '400':
-          description: Invalid input
-        default:
-          description: Unexpected error
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-      security:
-        - petstore_auth:
-            - write:pets
-            - read:pets
+                $ref: '#/components/schemas/Error'
+
+  /friends/{friendId}:
     delete:
       tags:
-        - pet
-      summary: Deletes a pet.
-      description: Delete a pet.
-      operationId: deletePet
+        - Friend
+      summary: Remove a friend
+      description: Removes a friend relationship between two users.
+      operationId: deleteFriend
       parameters:
-        - name: api_key
-          in: header
-          description: ''
-          required: false
+        - name: friendId
+          in: path
+          required: true
+          description: The friend relationship ID or the friend user ID
           schema:
             type: string
-        - name: petId
-          in: path
-          description: Pet id to delete
-          required: true
-          schema:
-            type: integer
-            format: int64
       responses:
         '200':
-          description: Pet deleted
-        '400':
-          description: Invalid pet value
-        default:
-          description: Unexpected error
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-      security:
-        - petstore_auth:
-            - write:pets
-            - read:pets
-  /pet/{petId}/uploadImage:
-    post:
-      tags:
-        - pet
-      summary: Uploads an image.
-      description: Upload image of the pet.
-      operationId: uploadFile
-      parameters:
-        - name: petId
-          in: path
-          description: ID of pet to update
-          required: true
-          schema:
-            type: integer
-            format: int64
-        - name: additionalMetadata
-          in: query
-          description: Additional Metadata
-          required: false
-          schema:
-            type: string
-      requestBody:
-        content:
-          application/octet-stream:
-            schema:
-              type: string
-              format: binary
-      responses:
-        '200':
-          description: successful operation
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
-        '400':
-          description: No file uploaded
+          description: Friend relationship removed
         '404':
-          description: Pet not found
+          description: Friend relationship not found
         default:
           description: Unexpected error
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
-      security:
-        - petstore_auth:
-            - write:pets
-            - read:pets
-  /store/inventory:
+                $ref: '#/components/schemas/Error'
+
+  /users/{userId}/friends:
     get:
       tags:
-        - store
-      summary: Returns pet inventories by status.
-      description: Returns a map of status codes to quantities.
-      operationId: getInventory
+        - Friend
+      summary: View a user's friends
+      description: Retrieves a list of all friends for the specified user.
+      operationId: getUserFriends
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          description: User ID
+          schema:
+            type: string
       responses:
         '200':
-          description: successful operation
+          description: A list of friends
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties:
-                  type: integer
-                  format: int32
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+        '404':
+          description: User not found
         default:
           description: Unexpected error
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
-      security:
-        - api_key: []
-  /store/order:
+                $ref: '#/components/schemas/Error'
+
+  ###############################################################
+  #                     POST & FEED ENDPOINTS                   #
+  ###############################################################
+  /posts:
     post:
       tags:
-        - store
-      summary: Place an order for a pet.
-      description: Place a new order in the store.
-      operationId: placeOrder
+        - Post
+      summary: Publish a new post
+      description: Creates a new post in the user's feed.
+      operationId: createPost
       requestBody:
+        description: Post object to be created
+        required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/Order'
-          application/xml:
-            schema:
-              $ref: '#/components/schemas/Order'
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/Order'
+              $ref: '#/components/schemas/Post'
       responses:
-        '200':
-          description: successful operation
+        '201':
+          description: Post created successfully
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Order'
+                $ref: '#/components/schemas/Post'
         '400':
-          description: Invalid input
-        '422':
-          description: Validation exception
+          description: Invalid post data
         default:
           description: Unexpected error
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
-  /store/order/{orderId}:
+                $ref: '#/components/schemas/Error'
+
+  /feed:
     get:
       tags:
-        - store
-      summary: Find purchase order by ID.
-      description: For valid response try integer IDs with value <= 5 or > 10. Other values will generate exceptions.
-      operationId: getOrderById
-      parameters:
-        - name: orderId
-          in: path
-          description: ID of order that needs to be fetched
-          required: true
-          schema:
-            type: integer
-            format: int64
-      responses:
-        '200':
-          description: successful operation
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Order'
-            application/xml:
-              schema:
-                $ref: '#/components/schemas/Order'
-        '400':
-          description: Invalid ID supplied
-        '404':
-          description: Order not found
-        default:
-          description: Unexpected error
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-    delete:
-      tags:
-        - store
-      summary: Delete purchase order by identifier.
-      description: For valid response try integer IDs with value < 1000. Anything above 1000 or nonintegers will generate API errors.
-      operationId: deleteOrder
-      parameters:
-        - name: orderId
-          in: path
-          description: ID of the order that needs to be deleted
-          required: true
-          schema:
-            type: integer
-            format: int64
-      responses:
-        '200':
-          description: order deleted
-        '400':
-          description: Invalid ID supplied
-        '404':
-          description: Order not found
-        default:
-          description: Unexpected error
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-  /user:
-    post:
-      tags:
-        - user
-      summary: Create user.
-      description: This can only be done by the logged in user.
-      operationId: createUser
-      requestBody:
-        description: Created user object
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/User'
-          application/xml:
-            schema:
-              $ref: '#/components/schemas/User'
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/User'
-      responses:
-        '200':
-          description: successful operation
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/User'
-            application/xml:
-              schema:
-                $ref: '#/components/schemas/User'
-        default:
-          description: Unexpected error
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-  /user/createWithList:
-    post:
-      tags:
-        - user
-      summary: Creates list of users with given input array.
-      description: Creates list of users with given input array.
-      operationId: createUsersWithListInput
-      requestBody:
-        content:
-          application/json:
-            schema:
-              type: array
-              items:
-                $ref: '#/components/schemas/User'
-      responses:
-        '200':
-          description: Successful operation
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/User'
-            application/xml:
-              schema:
-                $ref: '#/components/schemas/User'
-        default:
-          description: Unexpected error
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-  /user/login:
-    get:
-      tags:
-        - user
-      summary: Logs user into the system.
-      description: Log into the system.
-      operationId: loginUser
-      parameters:
-        - name: username
-          in: query
-          description: The user name for login
-          required: false
-          schema:
-            type: string
-        - name: password
-          in: query
-          description: The password for login in clear text
-          required: false
-          schema:
-            type: string
-      responses:
-        '200':
-          description: successful operation
-          headers:
-            X-Rate-Limit:
-              description: calls per hour allowed by the user
-              schema:
-                type: integer
-                format: int32
-            X-Expires-After:
-              description: date in UTC when token expires
-              schema:
-                type: string
-                format: date-time
-          content:
-            application/xml:
-              schema:
-                type: string
-            application/json:
-              schema:
-                type: string
-        '400':
-          description: Invalid username/password supplied
-        default:
-          description: Unexpected error
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-  /user/logout:
-    get:
-      tags:
-        - user
-      summary: Logs out current logged in user session.
-      description: Log user out of the system.
-      operationId: logoutUser
+        - Post
+      summary: Get home feed
+      description: Returns the main (home) feed, typically including posts from the user and their friends.
+      operationId: getHomeFeed
       parameters: []
       responses:
         '200':
-          description: successful operation
+          description: A list of posts in the home feed
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Post'
         default:
           description: Unexpected error
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
-  /user/{username}:
+                $ref: '#/components/schemas/Error'
+
+  /users/{userId}/posts:
     get:
       tags:
-        - user
-      summary: Get user by user name.
-      description: Get user detail based on username.
-      operationId: getUserByName
+        - Post
+      summary: Get a user's posts
+      description: Returns all posts for a specific user.
+      operationId: getUserPosts
       parameters:
-        - name: username
+        - name: userId
           in: path
-          description: The name that needs to be fetched. Use user1 for testing
           required: true
+          description: The user ID
           schema:
             type: string
       responses:
         '200':
-          description: successful operation
+          description: A list of posts from a user
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/User'
-            application/xml:
-              schema:
-                $ref: '#/components/schemas/User'
-        '400':
-          description: Invalid username supplied
+                type: array
+                items:
+                  $ref: '#/components/schemas/Post'
         '404':
           description: User not found
         default:
@@ -669,245 +240,298 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
-    put:
+                $ref: '#/components/schemas/Error'
+
+  ###############################################################
+  #                       MEDIA ENDPOINT                        #
+  ###############################################################
+  /posts/{postId}/media:
+    post:
       tags:
-        - user
-      summary: Update user resource.
-      description: This can only be done by the logged in user.
-      operationId: updateUser
+        - Media
+      summary: Upload media for a specific post
+      description: Uploads an image/video to an existing post.
+      operationId: uploadMedia
       parameters:
-        - name: username
+        - name: postId
           in: path
-          description: name that need to be deleted
           required: true
+          description: The ID of the post to which the media is uploaded
           schema:
             type: string
       requestBody:
-        description: Update an existent user in the store
+        description: Binary media file
+        required: true
         content:
-          application/json:
+          multipart/form-data:
             schema:
-              $ref: '#/components/schemas/User'
-          application/xml:
-            schema:
-              $ref: '#/components/schemas/User'
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/User'
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
       responses:
         '200':
-          description: successful operation
+          description: Media uploaded successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Media'
         '400':
-          description: bad request
+          description: No file uploaded or invalid file
         '404':
-          description: user not found
+          description: Post not found
         default:
           description: Unexpected error
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
-    delete:
+                $ref: '#/components/schemas/Error'
+
+  ###############################################################
+  #                     CHAT & MESSAGE ENDPOINTS                #
+  ###############################################################
+  /chats:
+    get:
       tags:
-        - user
-      summary: Delete user resource.
-      description: This can only be done by the logged in user.
-      operationId: deleteUser
+        - Chat
+      summary: View all chats for a user
+      description: Retrieves a list of chat sessions/dialogs associated with the logged-in user.
+      operationId: getUserChats
+      parameters: []
+      responses:
+        '200':
+          description: A list of user chats
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Chat'
+        default:
+          description: Unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /chats/{chatId}/messages:
+    get:
+      tags:
+        - Message
+      summary: View messages in a chat
+      description: Retrieves a list of messages for a specific chat.
+      operationId: getChatMessages
       parameters:
-        - name: username
+        - name: chatId
           in: path
-          description: The name that needs to be deleted
           required: true
+          description: The ID of the chat to retrieve messages from
           schema:
             type: string
       responses:
         '200':
-          description: User deleted
-        '400':
-          description: Invalid username supplied
+          description: A list of messages
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Message'
         '404':
-          description: User not found
+          description: Chat not found
         default:
           description: Unexpected error
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                $ref: '#/components/schemas/Error'
+    post:
+      tags:
+        - Message
+      summary: Send a message in a chat
+      description: Sends a new message to the specified chat.
+      operationId: sendChatMessage
+      parameters:
+        - name: chatId
+          in: path
+          required: true
+          description: The ID of the chat to send the message to
+          schema:
+            type: string
+      requestBody:
+        description: Message content
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Message'
+      responses:
+        '201':
+          description: Message created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '400':
+          description: Invalid message data
+        '404':
+          description: Chat not found
+        default:
+          description: Unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
 components:
   schemas:
-    Order:
-      type: object
-      properties:
-        id:
-          type: integer
-          format: int64
-          example: 10
-        petId:
-          type: integer
-          format: int64
-          example: 198772
-        quantity:
-          type: integer
-          format: int32
-          example: 7
-        shipDate:
-          type: string
-          format: date-time
-        status:
-          type: string
-          description: Order Status
-          example: approved
-          enum:
-            - placed
-            - approved
-            - delivered
-        complete:
-          type: boolean
-      xml:
-        name: order
-    Category:
-      type: object
-      properties:
-        id:
-          type: integer
-          format: int64
-          example: 1
-        name:
-          type: string
-          example: Dogs
-      xml:
-        name: category
     User:
       type: object
       properties:
         id:
-          type: integer
-          format: int64
-          example: 10
+          type: string
+          example: "user123"
         username:
           type: string
-          example: theUser
+          example: "john_doe"
         firstName:
           type: string
-          example: John
+          example: "John"
         lastName:
           type: string
-          example: James
+          example: "Doe"
         email:
           type: string
-          example: john@email.com
-        password:
+          example: "john@example.com"
+        avatarUrl:
           type: string
-          example: '12345'
-        phone:
-          type: string
-          example: '12345'
-        userStatus:
-          type: integer
-          description: User Status
-          format: int32
-          example: 1
-      xml:
-        name: user
-    Tag:
-      type: object
-      properties:
-        id:
-          type: integer
-          format: int64
-        name:
-          type: string
-      xml:
-        name: tag
-    Pet:
+          format: uri
+          example: "https://example.com/avatars/john_doe.png"
       required:
-        - name
-        - photoUrls
+        - id
+        - username
+
+    Friend:
+      type: object
+      properties:
+        userId:
+          type: string
+          example: "user123"
+        friendId:
+          type: string
+          example: "friend456"
+      required:
+        - userId
+        - friendId
+
+    Post:
       type: object
       properties:
         id:
-          type: integer
-          format: int64
-          example: 10
-        name:
           type: string
-          example: doggie
-        category:
-          $ref: '#/components/schemas/Category'
-        photoUrls:
+          example: "post789"
+        userId:
+          type: string
+          example: "user123"
+        content:
+          type: string
+          example: "Hello world!"
+        createdAt:
+          type: string
+          format: date-time
+          example: "2025-03-21T10:15:30Z"
+        mediaUrls:
           type: array
-          xml:
-            wrapped: true
           items:
             type: string
-            xml:
-              name: photoUrl
-        tags:
-          type: array
-          xml:
-            wrapped: true
-          items:
-            $ref: '#/components/schemas/Tag'
-        status:
-          type: string
-          description: pet status in the store
-          enum:
-            - available
-            - pending
-            - sold
-      xml:
-        name: pet
-    ApiResponse:
+            format: uri
+          example: ["https://example.com/uploads/img1.png"]
+      required:
+        - userId
+        - content
+
+    Media:
       type: object
       properties:
-        code:
-          type: integer
-          format: int32
-        type:
+        mediaId:
           type: string
-        message:
+          example: "media001"
+        postId:
           type: string
-      xml:
-        name: '##default'
+          example: "post789"
+        url:
+          type: string
+          format: uri
+          example: "https://example.com/uploads/img1.png"
+      required:
+        - mediaId
+        - postId
+        - url
+
+    Chat:
+      type: object
+      properties:
+        chatId:
+          type: string
+          example: "chatABC"
+        participantIds:
+          type: array
+          items:
+            type: string
+          example: ["user123", "user456"]
+        lastMessage:
+          type: string
+          example: "Hey, how are you?"
+        updatedAt:
+          type: string
+          format: date-time
+          example: "2025-03-21T10:20:00Z"
+      required:
+        - chatId
+        - participantIds
+
+    Message:
+      type: object
+      properties:
+        messageId:
+          type: string
+          example: "msg001"
+        chatId:
+          type: string
+          example: "chatABC"
+        senderId:
+          type: string
+          example: "user123"
+        content:
+          type: string
+          example: "Hello!"
+        sentAt:
+          type: string
+          format: date-time
+          example: "2025-03-21T10:30:15Z"
+      required:
+        - chatId
+        - senderId
+        - content
+
     Error:
       type: object
       properties:
         code:
-          type: string
+          type: integer
+          format: int32
+          example: 400
         message:
           type: string
+          example: "Bad Request"
       required:
         - code
         - message
-  requestBodies:
-    Pet:
-      description: Pet object that needs to be added to the store
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Pet'
-        application/xml:
-          schema:
-            $ref: '#/components/schemas/Pet'
-    UserArray:
-      description: List of user object
-      content:
-        application/json:
-          schema:
-            type: array
-            items:
-              $ref: '#/components/schemas/User'
+
   securitySchemes:
-    petstore_auth:
-      type: oauth2
-      flows:
-        implicit:
-          authorizationUrl: https://petstore3.swagger.io/oauth/authorize
-          scopes:
-            "write:pets": modify pets in your account
-            "read:pets": read your pets
-    api_key:
-      type: apiKey
-      name: api_key
-      in: header
+    # Example: simple Bearer token or API key usage
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
