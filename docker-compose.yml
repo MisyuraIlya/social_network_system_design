@@ -1,174 +1,771 @@
-version: '3.8'
+openapi: 3.0.4
+info:
+  title: User Service API
+  description: |
+    A microservice responsible for user data management, supporting:
+    - Master-slave (async) replication with a replication factor of 3.
+    - Sharding by user_id (key-based).
+    - CRUD operations for users, user data, cities, and interests.
+    - Managing follows, relationships, and friends.
+  version: 1.0.0
+servers:
+  - url: https://api.example.com/v1
 
-services:
-  zookeeper:
-    image: bitnami/zookeeper:latest
-    container_name: zookeeper
-    environment:
-      - ZOO_ENABLE_AUTH=no
-      - ALLOW_ANONYMOUS_LOGIN=yes
-    ports:
-      - "2181:2181"
-    networks:
-      - social_network
+tags:
+  - name: Users
+    description: Operations on the `users` table
+  - name: UserData
+    description: Operations on the `user_data` table
+  - name: Cities
+    description: Operations on the `cities` table
+  - name: Interests
+    description: Operations on the `interests` table
+  - name: Follows
+    description: Operations on the `follows` table
+  - name: Relationships
+    description: Operations on the `relationship` table
+  - name: Friends
+    description: Operations on the `friends` table
 
-  kafka:
-    image: bitnami/kafka:latest
-    container_name: kafka
-    depends_on:
-      - zookeeper
-    environment:
-      - KAFKA_BROKER_ID=1
-      - KAFKA_ZOOKEEPER_CONNECT=zookeeper:2181
-      - ALLOW_PLAINTEXT_LISTENER=yes
-      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
-    ports:
-      - "9092:9092"
-    networks:
-      - social_network
+paths:
+  ########################################################
+  #                     USERS                            #
+  ########################################################
+  /users:
+    get:
+      tags:
+        - Users
+      summary: Get all users
+      description: Retrieves a list of all users.
+      operationId: getAllUsers
+      parameters: []
+      responses:
+        '200':
+          description: A list of users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+        default:
+          description: Unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      tags:
+        - Users
+      summary: Create a new user
+      description: Inserts a new record into the `users` table.
+      operationId: createUser
+      requestBody:
+        description: User object to create
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserCreate'
+      responses:
+        '201':
+          description: User created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          description: Invalid user data
+        default:
+          description: Unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
-  postgres:
-    image: postgres:14-alpine
-    container_name: postgres
-    environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-      - POSTGRES_DB=social_network_db
-    ports:
-      - "5432:5432"
-    networks:
-      - social_network
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
+  /users/{userId}:
+    get:
+      tags:
+        - Users
+      summary: Get a specific user
+      description: Returns a single user by ID from the `users` table.
+      operationId: getUserById
+      parameters:
+        - name: userId
+          in: path
+          description: The user ID
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: User found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '404':
+          description: User not found
+        default:
+          description: Unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    put:
+      tags:
+        - Users
+      summary: Update a user
+      description: Updates an existing user in the `users` table.
+      operationId: updateUser
+      parameters:
+        - name: userId
+          in: path
+          description: The user ID
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        description: User data to update
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserUpdate'
+      responses:
+        '200':
+          description: User updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '404':
+          description: User not found
+        default:
+          description: Unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      tags:
+        - Users
+      summary: Delete a user
+      description: Removes a user from the `users` table.
+      operationId: deleteUser
+      parameters:
+        - name: userId
+          in: path
+          description: The user ID
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: User deleted successfully
+        '404':
+          description: User not found
+        default:
+          description: Unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
-  minio:
-    image: minio/minio:latest
-    container_name: minio
-    environment:
-      - MINIO_ROOT_USER=minioadmin
-      - MINIO_ROOT_PASSWORD=minioadmin
-    command: server /data --console-address ":9001"
-    ports:
-      - "9000:9000"   # S3-compatible API
-      - "9001:9001"   # MinIO console
-    networks:
-      - social_network
-    volumes:
-      - minio_data:/data
+  ########################################################
+  #                     USER_DATA                        #
+  ########################################################
+  /users/{userId}/data:
+    get:
+      tags:
+        - UserData
+      summary: Get user data
+      description: Retrieves extended user info from `user_data`.
+      operationId: getUserData
+      parameters:
+        - name: userId
+          in: path
+          description: The user ID
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: The requested user data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserData'
+        '404':
+          description: User data not found
+        default:
+          description: Unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      tags:
+        - UserData
+      summary: Create or overwrite user data
+      description: Inserts or updates user_data for the specified user.
+      operationId: createUserData
+      parameters:
+        - name: userId
+          in: path
+          description: The user ID
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        description: User data to insert or update
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserDataCreate'
+      responses:
+        '201':
+          description: User data created/updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserData'
+        '404':
+          description: User not found
+        '400':
+          description: Invalid request data
+        default:
+          description: Unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
-  # ----- API Gateway -----
-  api-gateway:
-    build: 
-      context: ./services/api-gateway
-      dockerfile: Dockerfile
-    container_name: api-gateway
-    depends_on:
-      - post-service
-      - media-service
-      - feed-service
-      - relation-service
-      - feedback-gateway
-    ports:
-      - "8080:8080"
-    networks:
-      - social_network
-    environment:
-      - KAFKA_BROKER=kafka:9092
-      - POSTGRES_HOST=postgres
-      - POSTGRES_DB=social_network_db
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-      - MINIO_ENDPOINT=minio:9000
-      - MINIO_ACCESS_KEY=minioadmin
-      - MINIO_SECRET_KEY=minioadmin
+  ########################################################
+  #                     CITIES                           #
+  ########################################################
+  /cities:
+    get:
+      tags:
+        - Cities
+      summary: Get all cities
+      description: Retrieves all cities from the `cities` table.
+      operationId: getAllCities
+      parameters: []
+      responses:
+        '200':
+          description: A list of cities
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/City'
+        default:
+          description: Unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      tags:
+        - Cities
+      summary: Create a city
+      description: Inserts a new city into the `cities` table.
+      operationId: createCity
+      requestBody:
+        description: City object to create
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CityCreate'
+      responses:
+        '201':
+          description: City created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/City'
+        '400':
+          description: Invalid city data
+        default:
+          description: Unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
-  # ----- Post Service -----
-  post-service:
-    build:
-      context: ./services/post-service
-      dockerfile: Dockerfile
-    container_name: post-service
-    depends_on:
-      - postgres
-    networks:
-      - social_network
-    environment:
-      - POSTGRES_HOST=postgres
-      - POSTGRES_DB=social_network_db
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-      - KAFKA_BROKER=kafka:9092
+  ########################################################
+  #                     INTERESTS                        #
+  ########################################################
+  /interests:
+    get:
+      tags:
+        - Interests
+      summary: Get all interests
+      description: Retrieves a list of all interests.
+      operationId: getAllInterests
+      parameters: []
+      responses:
+        '200':
+          description: A list of interests
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Interest'
+        default:
+          description: Unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      tags:
+        - Interests
+      summary: Create a new interest
+      description: Inserts a new record in the `interests` table.
+      operationId: createInterest
+      requestBody:
+        description: Interest object to create
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InterestCreate'
+      responses:
+        '201':
+          description: Interest created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Interest'
+        '400':
+          description: Invalid interest data
+        default:
+          description: Unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
-  # ----- Media Service -----
-  media-service:
-    build:
-      context: ./services/media-service
-      dockerfile: Dockerfile
-    container_name: media-service
-    depends_on:
-      - minio
-    networks:
-      - social_network
-    environment:
-      - MINIO_ENDPOINT=minio:9000
-      - MINIO_ACCESS_KEY=minioadmin
-      - MINIO_SECRET_KEY=minioadmin
+  /users/{userId}/interests:
+    post:
+      tags:
+        - Interests
+      summary: Add an interest to a user
+      description: Creates a record in the `interests_users` table.
+      operationId: addInterestToUser
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          description: The user ID
+          schema:
+            type: integer
+      requestBody:
+        description: Interest ID to associate with the user
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InterestUserCreate'
+      responses:
+        '201':
+          description: Interest added to user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InterestsUsers'
+        '404':
+          description: User or interest not found
+        '400':
+          description: Invalid request
+        default:
+          description: Unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
-  # ----- Feed Service -----
-  feed-service:
-    build:
-      context: ./services/feed-service
-      dockerfile: Dockerfile
-    container_name: feed-service
-    depends_on:
-      - kafka
-      - postgres
-    networks:
-      - social_network
-    environment:
-      - POSTGRES_HOST=postgres
-      - POSTGRES_DB=social_network_db
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-      - KAFKA_BROKER=kafka:9092
+  ########################################################
+  #                      FOLLOWS                         #
+  ########################################################
+  /follows:
+    post:
+      tags:
+        - Follows
+      summary: Follow another user
+      description: Inserts a record into the `follows` table.
+      operationId: followUser
+      requestBody:
+        description: The user and the user to be followed
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FollowsCreate'
+      responses:
+        '201':
+          description: Successfully followed the user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Follows'
+        '400':
+          description: Invalid request data
+        default:
+          description: Unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
-  # ----- Relation Service -----
-  relation-service:
-    build:
-      context: ./services/relation-service
-      dockerfile: Dockerfile
-    container_name: relation-service
-    depends_on:
-      - postgres
-    networks:
-      - social_network
-    environment:
-      - POSTGRES_HOST=postgres
-      - POSTGRES_DB=social_network_db
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
+  ########################################################
+  #                  RELATIONSHIP                        #
+  ########################################################
+  /relationship:
+    post:
+      tags:
+        - Relationships
+      summary: Add or update a relationship
+      description: Inserts or updates a record in the `relationship` table.
+      operationId: createRelationship
+      requestBody:
+        description: Relationship data
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RelationshipCreate'
+      responses:
+        '201':
+          description: Relationship created/updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Relationship'
+        '400':
+          description: Invalid relationship data
+        default:
+          description: Unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
-  # ----- Feedback Gateway (for likes/comments) -----
-  feedback-gateway:
-    build:
-      context: ./services/feedback-gateway
-      dockerfile: Dockerfile
-    container_name: feedback-gateway
-    depends_on:
-      - kafka
-      - postgres
-    networks:
-      - social_network
-    environment:
-      - POSTGRES_HOST=postgres
-      - POSTGRES_DB=social_network_db
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-      - KAFKA_BROKER=kafka:9092
+  ########################################################
+  #                      FRIENDS                         #
+  ########################################################
+  /friends:
+    post:
+      tags:
+        - Friends
+      summary: Add a friend
+      description: Inserts a record into the `friends` table (representing a friendship).
+      operationId: addFriend
+      requestBody:
+        description: User ID and friend ID
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FriendsCreate'
+      responses:
+        '201':
+          description: Successfully added a friend
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Friends'
+        '400':
+          description: Invalid friend data
+        default:
+          description: Unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
-networks:
-  social_network:
+components:
+  schemas:
+    ########################################################
+    #                     USERS                            #
+    ########################################################
+    User:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 123
+        name:
+          type: string
+          example: "John Doe"
+        photo:
+          type: string
+          format: uri
+          example: "https://example.com/john.jpg"
+        created_at:
+          type: string
+          format: date-time
+          example: "2025-03-22T10:00:00Z"
+      required:
+        - id
+        - name
+    UserCreate:
+      type: object
+      properties:
+        name:
+          type: string
+          example: "John Doe"
+        photo:
+          type: string
+          format: uri
+          example: "https://example.com/john.jpg"
+      required:
+        - name
+    UserUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+          example: "John Doe Updated"
+        photo:
+          type: string
+          format: uri
+          example: "https://example.com/new_john.jpg"
+      required: []
 
-volumes:
-  postgres_data:
-  minio_data:
+    ########################################################
+    #                    USER_DATA                         #
+    ########################################################
+    UserData:
+      type: object
+      properties:
+        user_id:
+          type: integer
+          example: 123
+        description:
+          type: string
+          example: "Software developer, coffee lover"
+        city_id:
+          type: integer
+          example: 5
+        education:
+          type: object
+          description: |
+            Nested JSON object describing educational background
+          example: { "degree": "BSc Computer Science", "institution": "Tech University" }
+        hobby:
+          type: object
+          description: |
+            Nested JSON object describing hobbies
+          example: { "outdoors": true, "sports": ["football", "tennis"] }
+      required:
+        - user_id
+    UserDataCreate:
+      type: object
+      properties:
+        description:
+          type: string
+          example: "Software developer, coffee lover"
+        city_id:
+          type: integer
+          example: 5
+        education:
+          type: object
+          example: { "degree": "BSc Computer Science", "institution": "Tech University" }
+        hobby:
+          type: object
+          example: { "outdoors": true, "sports": ["football", "tennis"] }
+      required: []
+
+    ########################################################
+    #                      CITIES                          #
+    ########################################################
+    City:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        name:
+          type: string
+          example: "New York"
+      required:
+        - id
+    CityCreate:
+      type: object
+      properties:
+        name:
+          type: string
+          example: "New York"
+      required:
+        - name
+
+    ########################################################
+    #                    INTERESTS                         #
+    ########################################################
+    Interest:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 10
+        name:
+          type: string
+          example: "Photography"
+      required:
+        - id
+    InterestCreate:
+      type: object
+      properties:
+        name:
+          type: string
+          example: "Photography"
+      required:
+        - name
+    InterestsUsers:
+      type: object
+      properties:
+        interest_id:
+          type: integer
+          example: 10
+        user_id:
+          type: integer
+          example: 123
+      required:
+        - interest_id
+        - user_id
+    InterestUserCreate:
+      type: object
+      properties:
+        interest_id:
+          type: integer
+          example: 10
+      required:
+        - interest_id
+
+    ########################################################
+    #                     FOLLOWS                          #
+    ########################################################
+    Follows:
+      type: object
+      properties:
+        user_id:
+          type: integer
+          example: 123
+        followed_id:
+          type: integer
+          example: 456
+        created_at:
+          type: string
+          format: date-time
+          example: "2025-03-22T10:15:30Z"
+      required:
+        - user_id
+        - followed_id
+    FollowsCreate:
+      type: object
+      properties:
+        user_id:
+          type: integer
+          example: 123
+        followed_id:
+          type: integer
+          example: 456
+      required:
+        - user_id
+        - followed_id
+
+    ########################################################
+    #                  RELATIONSHIP                        #
+    ########################################################
+    Relationship:
+      type: object
+      properties:
+        user_id:
+          type: integer
+          example: 123
+        related_id:
+          type: integer
+          example: 999
+        relationship_type:
+          type: integer
+          example: 2
+        created_at:
+          type: string
+          format: date-time
+          example: "2025-03-22T10:20:00Z"
+      required:
+        - user_id
+        - related_id
+        - relationship_type
+    RelationshipCreate:
+      type: object
+      properties:
+        user_id:
+          type: integer
+          example: 123
+        related_id:
+          type: integer
+          example: 999
+        relationship_type:
+          type: integer
+          example: 2
+      required:
+        - user_id
+        - related_id
+        - relationship_type
+
+    ########################################################
+    #                     FRIENDS                          #
+    ########################################################
+    Friends:
+      type: object
+      properties:
+        user_id:
+          type: integer
+          example: 123
+        friend_id:
+          type: integer
+          example: 456
+        created_at:
+          type: string
+          format: date-time
+          example: "2025-03-22T10:25:00Z"
+      required:
+        - user_id
+        - friend_id
+    FriendsCreate:
+      type: object
+      properties:
+        user_id:
+          type: integer
+          example: 123
+        friend_id:
+          type: integer
+          example: 456
+      required:
+        - user_id
+        - friend_id
+
+    ########################################################
+    #                      ERROR                           #
+    ########################################################
+    Error:
+      type: object
+      properties:
+        code:
+          type: integer
+          format: int32
+          example: 400
+        message:
+          type: string
+          example: "Bad Request"
+      required:
+        - code
+        - message
