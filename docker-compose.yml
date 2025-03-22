@@ -1,0 +1,174 @@
+version: '3.8'
+
+services:
+  zookeeper:
+    image: bitnami/zookeeper:latest
+    container_name: zookeeper
+    environment:
+      - ZOO_ENABLE_AUTH=no
+      - ALLOW_ANONYMOUS_LOGIN=yes
+    ports:
+      - "2181:2181"
+    networks:
+      - social_network
+
+  kafka:
+    image: bitnami/kafka:latest
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    environment:
+      - KAFKA_BROKER_ID=1
+      - KAFKA_ZOOKEEPER_CONNECT=zookeeper:2181
+      - ALLOW_PLAINTEXT_LISTENER=yes
+      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
+    ports:
+      - "9092:9092"
+    networks:
+      - social_network
+
+  postgres:
+    image: postgres:14-alpine
+    container_name: postgres
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=social_network_db
+    ports:
+      - "5432:5432"
+    networks:
+      - social_network
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"   # S3-compatible API
+      - "9001:9001"   # MinIO console
+    networks:
+      - social_network
+    volumes:
+      - minio_data:/data
+
+  # ----- API Gateway -----
+  api-gateway:
+    build: 
+      context: ./services/api-gateway
+      dockerfile: Dockerfile
+    container_name: api-gateway
+    depends_on:
+      - post-service
+      - media-service
+      - feed-service
+      - relation-service
+      - feedback-gateway
+    ports:
+      - "8080:8080"
+    networks:
+      - social_network
+    environment:
+      - KAFKA_BROKER=kafka:9092
+      - POSTGRES_HOST=postgres
+      - POSTGRES_DB=social_network_db
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+
+  # ----- Post Service -----
+  post-service:
+    build:
+      context: ./services/post-service
+      dockerfile: Dockerfile
+    container_name: post-service
+    depends_on:
+      - postgres
+    networks:
+      - social_network
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_DB=social_network_db
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - KAFKA_BROKER=kafka:9092
+
+  # ----- Media Service -----
+  media-service:
+    build:
+      context: ./services/media-service
+      dockerfile: Dockerfile
+    container_name: media-service
+    depends_on:
+      - minio
+    networks:
+      - social_network
+    environment:
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+
+  # ----- Feed Service -----
+  feed-service:
+    build:
+      context: ./services/feed-service
+      dockerfile: Dockerfile
+    container_name: feed-service
+    depends_on:
+      - kafka
+      - postgres
+    networks:
+      - social_network
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_DB=social_network_db
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - KAFKA_BROKER=kafka:9092
+
+  # ----- Relation Service -----
+  relation-service:
+    build:
+      context: ./services/relation-service
+      dockerfile: Dockerfile
+    container_name: relation-service
+    depends_on:
+      - postgres
+    networks:
+      - social_network
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_DB=social_network_db
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+
+  # ----- Feedback Gateway (for likes/comments) -----
+  feedback-gateway:
+    build:
+      context: ./services/feedback-gateway
+      dockerfile: Dockerfile
+    container_name: feedback-gateway
+    depends_on:
+      - kafka
+      - postgres
+    networks:
+      - social_network
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_DB=social_network_db
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - KAFKA_BROKER=kafka:9092
+
+networks:
+  social_network:
+
+volumes:
+  postgres_data:
+  minio_data:

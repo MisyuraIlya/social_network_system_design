@@ -1,31 +1,31 @@
 openapi: 3.0.4
 info:
-  title: Social Network API
+  title: My Social Network API
   description: |
-    This is an example of a simple social network API that allows:
+    This is an example of a simple social network API showcasing:
     - Managing friend relationships (adding/removing).
-    - Viewing user friends.
-    - Viewing user profiles.
+    - Viewing user profiles and friends.
     - Publishing posts (with optional media attachments).
-    - Viewing feeds (home feed and user feed).
-    - Viewing user dialogs/chats.
-    - Sending and reading messages.
+    - Viewing feeds (home feed and user-specific feed).
+    - Managing chats and messages.
   version: 1.0.0
+
 servers:
-  - url: https://api.example.com/v1
+  - url: https://api.my-social-network.com/v1
+
 tags:
   - name: User
     description: Operations related to user profiles
   - name: Friend
     description: Operations related to adding/removing friends
   - name: Post
-    description: Operations related to posts and feeds
+    description: Operations related to creating and viewing posts
   - name: Media
     description: Operations related to uploading media for posts
   - name: Chat
-    description: Operations related to chats and messages
+    description: Operations related to creating and viewing chats
   - name: Message
-    description: Operations related to sending and reading messages
+    description: Operations related to sending and retrieving messages
 
 paths:
 
@@ -37,13 +37,13 @@ paths:
       tags:
         - User
       summary: Get user profile
-      description: Returns a single user's profile information.
+      description: Retrieves profile information for a single user.
       operationId: getUserProfile
       parameters:
         - name: userId
           in: path
           required: true
-          description: The ID of the user to retrieve
+          description: ID of the user to retrieve
           schema:
             type: string
       responses:
@@ -62,6 +62,36 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  /users:
+    post:
+      tags:
+        - User
+      summary: Create a new user
+      description: Registers a new user in the system.
+      operationId: createUser
+      requestBody:
+        description: New user details
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserCreate'
+      responses:
+        '201':
+          description: User created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          description: Invalid user data
+        default:
+          description: Unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   ###############################################################
   #                   FRIEND ENDPOINTS                          #
   ###############################################################
@@ -70,10 +100,10 @@ paths:
       tags:
         - Friend
       summary: Add a friend
-      description: Sends a friend request or immediately adds a user as a friend (depending on your logic).
+      description: Sends a friend request or directly adds a friend, depending on business rules.
       operationId: addFriend
       requestBody:
-        description: Friend object containing user IDs or friend details
+        description: Object containing user IDs for creating a friend relationship
         required: true
         content:
           application/json:
@@ -101,7 +131,7 @@ paths:
         - Friend
       summary: Remove a friend
       description: Removes a friend relationship between two users.
-      operationId: deleteFriend
+      operationId: removeFriend
       parameters:
         - name: friendId
           in: path
@@ -132,12 +162,12 @@ paths:
         - name: userId
           in: path
           required: true
-          description: User ID
+          description: ID of the user
           schema:
             type: string
       responses:
         '200':
-          description: A list of friends
+          description: A list of friends for the user
           content:
             application/json:
               schema:
@@ -161,7 +191,7 @@ paths:
       tags:
         - Post
       summary: Publish a new post
-      description: Creates a new post in the user's feed.
+      description: Creates a new post by the authenticated user.
       operationId: createPost
       requestBody:
         description: Post object to be created
@@ -169,7 +199,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/Post'
+              $ref: '#/components/schemas/PostCreate'
       responses:
         '201':
           description: Post created successfully
@@ -186,17 +216,40 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+    get:
+      tags:
+        - Post
+      summary: Get all posts
+      description: Retrieves all public posts (optional: you can add filters/pagination).
+      operationId: getAllPosts
+      parameters: []
+      responses:
+        '200':
+          description: A list of all posts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Post'
+        default:
+          description: Unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   /feed:
     get:
       tags:
         - Post
       summary: Get home feed
-      description: Returns the main (home) feed, typically including posts from the user and their friends.
+      description: Returns the home feed, typically posts from the user and their friends.
       operationId: getHomeFeed
       parameters: []
       responses:
         '200':
-          description: A list of posts in the home feed
+          description: A list of posts in the user's home feed
           content:
             application/json:
               schema:
@@ -215,18 +268,18 @@ paths:
       tags:
         - Post
       summary: Get a user's posts
-      description: Returns all posts for a specific user.
+      description: Returns all posts created by a specific user.
       operationId: getUserPosts
       parameters:
         - name: userId
           in: path
           required: true
-          description: The user ID
+          description: ID of the user
           schema:
             type: string
       responses:
         '200':
-          description: A list of posts from a user
+          description: A list of posts from the user
           content:
             application/json:
               schema:
@@ -242,6 +295,36 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  /posts/{postId}:
+    get:
+      tags:
+        - Post
+      summary: Get a single post
+      description: Retrieves a specific post by its ID.
+      operationId: getSinglePost
+      parameters:
+        - name: postId
+          in: path
+          required: true
+          description: ID of the post
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The requested post
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Post'
+        '404':
+          description: Post not found
+        default:
+          description: Unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   ###############################################################
   #                       MEDIA ENDPOINT                        #
   ###############################################################
@@ -249,18 +332,18 @@ paths:
     post:
       tags:
         - Media
-      summary: Upload media for a specific post
-      description: Uploads an image/video to an existing post.
+      summary: Upload media for a post
+      description: Attaches an image (or other media) to an existing post.
       operationId: uploadMedia
       parameters:
         - name: postId
           in: path
           required: true
-          description: The ID of the post to which the media is uploaded
+          description: ID of the post
           schema:
             type: string
       requestBody:
-        description: Binary media file
+        description: Media file to upload
         required: true
         content:
           multipart/form-data:
@@ -295,13 +378,13 @@ paths:
     get:
       tags:
         - Chat
-      summary: View all chats for a user
-      description: Retrieves a list of chat sessions/dialogs associated with the logged-in user.
+      summary: Get all chats for the authenticated user
+      description: Retrieves a list of chats/dialogs for the current user.
       operationId: getUserChats
       parameters: []
       responses:
         '200':
-          description: A list of user chats
+          description: A list of chat sessions
           content:
             application/json:
               schema:
@@ -315,23 +398,52 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+    post:
+      tags:
+        - Chat
+      summary: Create a new chat
+      description: Starts a new chat session between two or more users.
+      operationId: createChat
+      requestBody:
+        description: Chat creation details (participant IDs, etc.)
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatCreate'
+      responses:
+        '201':
+          description: Chat created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Chat'
+        '400':
+          description: Invalid chat data
+        default:
+          description: Unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   /chats/{chatId}/messages:
     get:
       tags:
         - Message
       summary: View messages in a chat
-      description: Retrieves a list of messages for a specific chat.
+      description: Retrieves messages from a specified chat.
       operationId: getChatMessages
       parameters:
         - name: chatId
           in: path
           required: true
-          description: The ID of the chat to retrieve messages from
+          description: ID of the chat
           schema:
             type: string
       responses:
         '200':
-          description: A list of messages
+          description: A list of messages in the chat
           content:
             application/json:
               schema:
@@ -346,17 +458,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+
     post:
       tags:
         - Message
-      summary: Send a message in a chat
-      description: Sends a new message to the specified chat.
+      summary: Send a new message in a chat
+      description: Sends a message from the current user to the specified chat.
       operationId: sendChatMessage
       parameters:
         - name: chatId
           in: path
           required: true
-          description: The ID of the chat to send the message to
+          description: ID of the chat
           schema:
             type: string
       requestBody:
@@ -365,10 +478,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/Message'
+              $ref: '#/components/schemas/MessageCreate'
       responses:
         '201':
-          description: Message created successfully
+          description: Message sent successfully
           content:
             application/json:
               schema:
@@ -386,6 +499,9 @@ paths:
 
 components:
   schemas:
+    ###############################################################
+    #                        USER SCHEMAS                         #
+    ###############################################################
     User:
       type: object
       properties:
@@ -408,10 +524,42 @@ components:
           type: string
           format: uri
           example: "https://example.com/avatars/john_doe.png"
+        createdAt:
+          type: string
+          format: date-time
+          example: "2025-03-21T10:15:30Z"
       required:
         - id
         - username
+        - email
 
+    UserCreate:
+      type: object
+      properties:
+        username:
+          type: string
+          example: "john_doe"
+        firstName:
+          type: string
+          example: "John"
+        lastName:
+          type: string
+          example: "Doe"
+        email:
+          type: string
+          example: "john@example.com"
+        password:
+          type: string
+          format: password
+          example: "SecretPassword123"
+      required:
+        - username
+        - email
+        - password
+
+    ###############################################################
+    #                      FRIEND SCHEMAS                         #
+    ###############################################################
     Friend:
       type: object
       properties:
@@ -425,6 +573,9 @@ components:
         - userId
         - friendId
 
+    ###############################################################
+    #                       POST SCHEMAS                          #
+    ###############################################################
     Post:
       type: object
       properties:
@@ -436,21 +587,38 @@ components:
           example: "user123"
         content:
           type: string
-          example: "Hello world!"
-        createdAt:
-          type: string
-          format: date-time
-          example: "2025-03-21T10:15:30Z"
+          example: "Hello world! This is my first post."
         mediaUrls:
           type: array
           items:
             type: string
             format: uri
           example: ["https://example.com/uploads/img1.png"]
+        createdAt:
+          type: string
+          format: date-time
+          example: "2025-03-21T10:15:30Z"
+      required:
+        - id
+        - userId
+        - content
+
+    PostCreate:
+      type: object
+      properties:
+        userId:
+          type: string
+          example: "user123"
+        content:
+          type: string
+          example: "Hello world!"
       required:
         - userId
         - content
 
+    ###############################################################
+    #                       MEDIA SCHEMAS                         #
+    ###############################################################
     Media:
       type: object
       properties:
@@ -464,11 +632,18 @@ components:
           type: string
           format: uri
           example: "https://example.com/uploads/img1.png"
+        uploadedAt:
+          type: string
+          format: date-time
+          example: "2025-03-21T10:20:00Z"
       required:
         - mediaId
         - postId
         - url
 
+    ###############################################################
+    #                       CHAT SCHEMAS                          #
+    ###############################################################
     Chat:
       type: object
       properties:
@@ -482,7 +657,7 @@ components:
           example: ["user123", "user456"]
         lastMessage:
           type: string
-          example: "Hey, how are you?"
+          example: "How are you?"
         updatedAt:
           type: string
           format: date-time
@@ -491,6 +666,20 @@ components:
         - chatId
         - participantIds
 
+    ChatCreate:
+      type: object
+      properties:
+        participantIds:
+          type: array
+          items:
+            type: string
+          example: ["user123", "user456"]
+      required:
+        - participantIds
+
+    ###############################################################
+    #                      MESSAGE SCHEMAS                        #
+    ###############################################################
     Message:
       type: object
       properties:
@@ -511,10 +700,27 @@ components:
           format: date-time
           example: "2025-03-21T10:30:15Z"
       required:
+        - messageId
         - chatId
         - senderId
         - content
 
+    MessageCreate:
+      type: object
+      properties:
+        senderId:
+          type: string
+          example: "user123"
+        content:
+          type: string
+          example: "Hello!"
+      required:
+        - senderId
+        - content
+
+    ###############################################################
+    #                        ERROR SCHEMA                         #
+    ###############################################################
     Error:
       type: object
       properties:
@@ -530,7 +736,6 @@ components:
         - message
 
   securitySchemes:
-    # Example: simple Bearer token or API key usage
     bearerAuth:
       type: http
       scheme: bearer
