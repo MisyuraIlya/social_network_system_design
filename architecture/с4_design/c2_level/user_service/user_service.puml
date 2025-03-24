@@ -1,0 +1,13 @@
+@startuml
+!include <C4/C4_Container>
+
+Container(apiGateway, "API Gateway")
+
+System_Boundary(userSystem, "User Service") {
+    Container(userService, "User Service", "Handling users data")
+    ContainerDb(pgSQL, "postgreSQL", "store data, relations, follow...")
+}
+
+Rel(apiGateway, userService, "request", "REST")
+Rel(userService, pgSQL, "")
+@enduml

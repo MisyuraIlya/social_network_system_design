@@ -1,0 +1,17 @@
+@startuml
+!include <C4/C4_Container>
+
+Container(apiGateway, "API Gateway")
+Container(kafka, "Kafka", "message queue", "includes posts for creating a home and user feed")
+Container(mediaService, "Media Service", "blob storage")
+
+System_Boundary(postSystem, "Post Service") {
+    Container(postService, "Post Service", "Processes posts")
+    ContainerDb(pgSQL, "postgreSQL", "store posts")
+}
+
+Rel(apiGateway, postService, "request", "REST")
+Rel(postService, pgSQL, "")
+Rel(postService, kafka, "add post")
+Rel(postService, mediaService, "upload media")
+@enduml

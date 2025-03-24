@@ -1,0 +1,32 @@
+@startuml
+!include <C4/C4_Container>
+
+Person(user, "User")
+Container(loadBalancer, "Load Balancer", "Nginx")
+Container(apiGateway, "API Gateway")
+Container(cdn, "CDN")
+
+Container(postService, "Post Service", "Handling posts")
+Container(feedService, "Feed Service", "Сollects a feed of posts")
+Container(messageService, "Message Service", "Handling messages")
+Container(userService, "User Service", "Handling actions with user")
+Container(feedbackService, "Feedback Service", "Handling comments, likes")
+
+System_Boundary(mediaSystem, "Media Service") {
+    Container(mediaService, "Media Service", "Handling media files")
+    ContainerDb(s3, "S3", "Blob storage")
+}
+
+Rel(user, loadBalancer, "Request", "REST")
+Rel(loadBalancer, apiGateway, "Request", "REST")
+Rel(user, cdn, "Downloads media")
+Rel(apiGateway, postService, "Send post", )
+Rel(apiGateway, mediaService, "Uploads media files")
+Rel(apiGateway, feedService, "Get feed")
+Rel(apiGateway, messageService, "Get/Send message")
+Rel(apiGateway, userService, "Get user_data/relation")
+Rel(apiGateway, feedbackService, "Get\Set comment/like")
+
+Rel(mediaService, s3, "Uploads media files")
+Rel(cdn, s3, "Downloads media from origin s3")
+@enduml

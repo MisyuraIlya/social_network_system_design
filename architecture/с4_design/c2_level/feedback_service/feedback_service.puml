@@ -1,0 +1,16 @@
+@startuml
+!include <C4/C4_Container>
+
+Container(apiGateway, "API Gateway")
+
+System_Boundary(feedbackSystem, "Feedback Service") {
+    Container(feedbackService, "Feedback Service", "Processes likes, comments")
+    ContainerDb(pgSQL, "postgreSQL", "store likes, comments")
+    ContainerDb(redis, "redis", "store popular likes, comments")
+}
+
+Rel(apiGateway, feedbackService, "request", "REST")
+Rel(feedbackService, pgSQL, "")
+Rel(feedbackService, redis, "")
+
+@enduml

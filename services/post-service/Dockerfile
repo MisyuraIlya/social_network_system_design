@@ -1,13 +1,13 @@
-# syntax=docker/dockerfile:1
-FROM golang:1.20-alpine AS build
+# service-post/Dockerfile
+FROM golang:1.20-alpine AS builder
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN go build -o post-service main.go
+RUN CGO_ENABLED=0 go build -o service cmd/main.go
 
-FROM alpine:3.17
+FROM alpine:3.16
 WORKDIR /app
-COPY --from=build /app/post-service /app/
-EXPOSE 8001
-ENTRYPOINT ["/app/post-service"]
+COPY --from=builder /app/service /app/service
+EXPOSE 8082
+CMD ["/app/service"]

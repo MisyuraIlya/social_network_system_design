@@ -1,0 +1,21 @@
+@startuml
+!include <C4/C4_Container>
+
+Container(apiGateway, "API Gateway")
+Container(kafka, "Kafka", "message queue", "includes posts for creating a home and user feed")
+Container(postService, "Post Service", "")
+Container(userService, "User Service", "")
+
+System_Boundary(feedSystem, "Feed Service") {
+    Container(feedService, "Feed Service", "Processes posts")
+    ContainerDb(redis, "redis", "store posts")
+}
+
+Rel(apiGateway, feedService, "request", "REST")
+Rel(feedService, redis, "store feeds")
+Rel(feedService, kafka, "get posts")
+Rel(feedService, postService, "get more posts")
+Rel(feedService, userService, "get followers, friedns...")
+
+
+@enduml

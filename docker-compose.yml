@@ -1,771 +1,359 @@
-openapi: 3.0.4
-info:
-  title: User Service API
-  description: |
-    A microservice responsible for user data management, supporting:
-    - Master-slave (async) replication with a replication factor of 3.
-    - Sharding by user_id (key-based).
-    - CRUD operations for users, user data, cities, and interests.
-    - Managing follows, relationships, and friends.
-  version: 1.0.0
-servers:
-  - url: https://api.example.com/v1
+version: '3.9'
 
-tags:
-  - name: Users
-    description: Operations on the `users` table
-  - name: UserData
-    description: Operations on the `user_data` table
-  - name: Cities
-    description: Operations on the `cities` table
-  - name: Interests
-    description: Operations on the `interests` table
-  - name: Follows
-    description: Operations on the `follows` table
-  - name: Relationships
-    description: Operations on the `relationship` table
-  - name: Friends
-    description: Operations on the `friends` table
+services:
+  #################################################################
+  #                           DATABASES                           #
+  #################################################################
+  user-db:
+    image: postgres:15
+    container_name: user-db
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: userpass
+      POSTGRES_DB: user_db
+    volumes:
+      - user_db_data:/var/lib/postgresql/data
+    networks:
+      - socialnet
 
-paths:
-  ########################################################
-  #                     USERS                            #
-  ########################################################
-  /users:
-    get:
-      tags:
-        - Users
-      summary: Get all users
-      description: Retrieves a list of all users.
-      operationId: getAllUsers
-      parameters: []
-      responses:
-        '200':
-          description: A list of users
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/User'
-        default:
-          description: Unexpected error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-    post:
-      tags:
-        - Users
-      summary: Create a new user
-      description: Inserts a new record into the `users` table.
-      operationId: createUser
-      requestBody:
-        description: User object to create
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UserCreate'
-      responses:
-        '201':
-          description: User created successfully
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/User'
-        '400':
-          description: Invalid user data
-        default:
-          description: Unexpected error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+  post-db:
+    image: postgres:15
+    container_name: post-db
+    environment:
+      POSTGRES_USER: post
+      POSTGRES_PASSWORD: postpass
+      POSTGRES_DB: post_db
+    volumes:
+      - post_db_data:/var/lib/postgresql/data
+    networks:
+      - socialnet
 
-  /users/{userId}:
-    get:
-      tags:
-        - Users
-      summary: Get a specific user
-      description: Returns a single user by ID from the `users` table.
-      operationId: getUserById
-      parameters:
-        - name: userId
-          in: path
-          description: The user ID
-          required: true
-          schema:
-            type: integer
-      responses:
-        '200':
-          description: User found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/User'
-        '404':
-          description: User not found
-        default:
-          description: Unexpected error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-    put:
-      tags:
-        - Users
-      summary: Update a user
-      description: Updates an existing user in the `users` table.
-      operationId: updateUser
-      parameters:
-        - name: userId
-          in: path
-          description: The user ID
-          required: true
-          schema:
-            type: integer
-      requestBody:
-        description: User data to update
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UserUpdate'
-      responses:
-        '200':
-          description: User updated successfully
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/User'
-        '404':
-          description: User not found
-        default:
-          description: Unexpected error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-    delete:
-      tags:
-        - Users
-      summary: Delete a user
-      description: Removes a user from the `users` table.
-      operationId: deleteUser
-      parameters:
-        - name: userId
-          in: path
-          description: The user ID
-          required: true
-          schema:
-            type: integer
-      responses:
-        '200':
-          description: User deleted successfully
-        '404':
-          description: User not found
-        default:
-          description: Unexpected error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+  feed-db:
+    image: postgres:15
+    container_name: feed-db
+    environment:
+      POSTGRES_USER: feed
+      POSTGRES_PASSWORD: feedpass
+      POSTGRES_DB: feed_db
+    volumes:
+      - feed_db_data:/var/lib/postgresql/data
+    networks:
+      - socialnet
 
-  ########################################################
-  #                     USER_DATA                        #
-  ########################################################
-  /users/{userId}/data:
-    get:
-      tags:
-        - UserData
-      summary: Get user data
-      description: Retrieves extended user info from `user_data`.
-      operationId: getUserData
-      parameters:
-        - name: userId
-          in: path
-          description: The user ID
-          required: true
-          schema:
-            type: integer
-      responses:
-        '200':
-          description: The requested user data
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/UserData'
-        '404':
-          description: User data not found
-        default:
-          description: Unexpected error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-    post:
-      tags:
-        - UserData
-      summary: Create or overwrite user data
-      description: Inserts or updates user_data for the specified user.
-      operationId: createUserData
-      parameters:
-        - name: userId
-          in: path
-          description: The user ID
-          required: true
-          schema:
-            type: integer
-      requestBody:
-        description: User data to insert or update
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UserDataCreate'
-      responses:
-        '201':
-          description: User data created/updated successfully
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/UserData'
-        '404':
-          description: User not found
-        '400':
-          description: Invalid request data
-        default:
-          description: Unexpected error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+  feedback-db:
+    image: postgres:15
+    container_name: feedback-db
+    environment:
+      POSTGRES_USER: feedback
+      POSTGRES_PASSWORD: feedbackpass
+      POSTGRES_DB: feedback_db
+    volumes:
+      - feedback_db_data:/var/lib/postgresql/data
+    networks:
+      - socialnet
 
-  ########################################################
-  #                     CITIES                           #
-  ########################################################
-  /cities:
-    get:
-      tags:
-        - Cities
-      summary: Get all cities
-      description: Retrieves all cities from the `cities` table.
-      operationId: getAllCities
-      parameters: []
-      responses:
-        '200':
-          description: A list of cities
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/City'
-        default:
-          description: Unexpected error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-    post:
-      tags:
-        - Cities
-      summary: Create a city
-      description: Inserts a new city into the `cities` table.
-      operationId: createCity
-      requestBody:
-        description: City object to create
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CityCreate'
-      responses:
-        '201':
-          description: City created
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/City'
-        '400':
-          description: Invalid city data
-        default:
-          description: Unexpected error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+  chat-db:
+    image: postgres:15
+    container_name: chat-db
+    environment:
+      POSTGRES_USER: chat
+      POSTGRES_PASSWORD: chatpass
+      POSTGRES_DB: chat_db
+    volumes:
+      - chat_db_data:/var/lib/postgresql/data
+    networks:
+      - socialnet
 
-  ########################################################
-  #                     INTERESTS                        #
-  ########################################################
-  /interests:
-    get:
-      tags:
-        - Interests
-      summary: Get all interests
-      description: Retrieves a list of all interests.
-      operationId: getAllInterests
-      parameters: []
-      responses:
-        '200':
-          description: A list of interests
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Interest'
-        default:
-          description: Unexpected error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-    post:
-      tags:
-        - Interests
-      summary: Create a new interest
-      description: Inserts a new record in the `interests` table.
-      operationId: createInterest
-      requestBody:
-        description: Interest object to create
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/InterestCreate'
-      responses:
-        '201':
-          description: Interest created
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Interest'
-        '400':
-          description: Invalid interest data
-        default:
-          description: Unexpected error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+  notification-db:
+    image: postgres:15
+    container_name: notification-db
+    environment:
+      POSTGRES_USER: notify
+      POSTGRES_PASSWORD: notifypass
+      POSTGRES_DB: notification_db
+    volumes:
+      - notification_db_data:/var/lib/postgresql/data
+    networks:
+      - socialnet
 
-  /users/{userId}/interests:
-    post:
-      tags:
-        - Interests
-      summary: Add an interest to a user
-      description: Creates a record in the `interests_users` table.
-      operationId: addInterestToUser
-      parameters:
-        - name: userId
-          in: path
-          required: true
-          description: The user ID
-          schema:
-            type: integer
-      requestBody:
-        description: Interest ID to associate with the user
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/InterestUserCreate'
-      responses:
-        '201':
-          description: Interest added to user
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/InterestsUsers'
-        '404':
-          description: User or interest not found
-        '400':
-          description: Invalid request
-        default:
-          description: Unexpected error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+  #################################################################
+  #                           CACHES / QUEUES                     #
+  #################################################################
+  redis:
+    image: redis:7
+    container_name: redis
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    networks:
+      - socialnet
 
-  ########################################################
-  #                      FOLLOWS                         #
-  ########################################################
-  /follows:
-    post:
-      tags:
-        - Follows
-      summary: Follow another user
-      description: Inserts a record into the `follows` table.
-      operationId: followUser
-      requestBody:
-        description: The user and the user to be followed
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/FollowsCreate'
-      responses:
-        '201':
-          description: Successfully followed the user
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Follows'
-        '400':
-          description: Invalid request data
-        default:
-          description: Unexpected error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+  kafka:
+    image: bitnami/kafka:latest
+    container_name: kafka
+    environment:
+      - KAFKA_BROKER_ID=1
+      - KAFKA_ZOOKEEPER_CONNECT=zookeeper:2181
+      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    networks:
+      - socialnet
 
-  ########################################################
-  #                  RELATIONSHIP                        #
-  ########################################################
-  /relationship:
-    post:
-      tags:
-        - Relationships
-      summary: Add or update a relationship
-      description: Inserts or updates a record in the `relationship` table.
-      operationId: createRelationship
-      requestBody:
-        description: Relationship data
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RelationshipCreate'
-      responses:
-        '201':
-          description: Relationship created/updated
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Relationship'
-        '400':
-          description: Invalid relationship data
-        default:
-          description: Unexpected error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+  zookeeper:
+    image: bitnami/zookeeper:latest
+    container_name: zookeeper
+    environment:
+      - ZOO_ENABLE_AUTH=no
+    ports:
+      - "2181:2181"
+    networks:
+      - socialnet
 
-  ########################################################
-  #                      FRIENDS                         #
-  ########################################################
-  /friends:
-    post:
-      tags:
-        - Friends
-      summary: Add a friend
-      description: Inserts a record into the `friends` table (representing a friendship).
-      operationId: addFriend
-      requestBody:
-        description: User ID and friend ID
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/FriendsCreate'
-      responses:
-        '201':
-          description: Successfully added a friend
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Friends'
-        '400':
-          description: Invalid friend data
-        default:
-          description: Unexpected error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+  #################################################################
+  #                           MINIO / S3                          #
+  #################################################################
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: minio123
+    ports:
+      - "9000:9000"   # S3-compatible API
+      - "9001:9001"   # Web console
+    volumes:
+      - minio_data:/data
+    networks:
+      - socialnet
 
-components:
-  schemas:
-    ########################################################
-    #                     USERS                            #
-    ########################################################
-    User:
-      type: object
-      properties:
-        id:
-          type: integer
-          example: 123
-        name:
-          type: string
-          example: "John Doe"
-        photo:
-          type: string
-          format: uri
-          example: "https://example.com/john.jpg"
-        created_at:
-          type: string
-          format: date-time
-          example: "2025-03-22T10:00:00Z"
-      required:
-        - id
-        - name
-    UserCreate:
-      type: object
-      properties:
-        name:
-          type: string
-          example: "John Doe"
-        photo:
-          type: string
-          format: uri
-          example: "https://example.com/john.jpg"
-      required:
-        - name
-    UserUpdate:
-      type: object
-      properties:
-        name:
-          type: string
-          example: "John Doe Updated"
-        photo:
-          type: string
-          format: uri
-          example: "https://example.com/new_john.jpg"
-      required: []
+  #################################################################
+  #                   CORE MICROSERVICES                         #
+  #################################################################
+  user-service:
+    container_name: user-service
+    build: ./user-service  
+    environment:
+      DB_HOST: user-db
+      DB_USER: user
+      DB_PASSWORD: userpass
+      DB_NAME: user_db
+    depends_on:
+      - user-db
+    networks:
+      - socialnet
+    ports:
+      - "8081:8081"
 
-    ########################################################
-    #                    USER_DATA                         #
-    ########################################################
-    UserData:
-      type: object
-      properties:
-        user_id:
-          type: integer
-          example: 123
-        description:
-          type: string
-          example: "Software developer, coffee lover"
-        city_id:
-          type: integer
-          example: 5
-        education:
-          type: object
-          description: |
-            Nested JSON object describing educational background
-          example: { "degree": "BSc Computer Science", "institution": "Tech University" }
-        hobby:
-          type: object
-          description: |
-            Nested JSON object describing hobbies
-          example: { "outdoors": true, "sports": ["football", "tennis"] }
-      required:
-        - user_id
-    UserDataCreate:
-      type: object
-      properties:
-        description:
-          type: string
-          example: "Software developer, coffee lover"
-        city_id:
-          type: integer
-          example: 5
-        education:
-          type: object
-          example: { "degree": "BSc Computer Science", "institution": "Tech University" }
-        hobby:
-          type: object
-          example: { "outdoors": true, "sports": ["football", "tennis"] }
-      required: []
+  post-service:
+    container_name: post-service
+    build: ./post-service
+    environment:
+      DB_HOST: post-db
+      DB_USER: post
+      DB_PASSWORD: postpass
+      DB_NAME: post_db
+      MEDIA_SERVICE_URL: http://minio:9000
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    depends_on:
+      - post-db
+      - kafka
+      - minio
+    networks:
+      - socialnet
+    ports:
+      - "8082:8082"
 
-    ########################################################
-    #                      CITIES                          #
-    ########################################################
-    City:
-      type: object
-      properties:
-        id:
-          type: integer
-          example: 1
-        name:
-          type: string
-          example: "New York"
-      required:
-        - id
-    CityCreate:
-      type: object
-      properties:
-        name:
-          type: string
-          example: "New York"
-      required:
-        - name
+  feed-service:
+    container_name: feed-service
+    build: ./feed-service
+    environment:
+      DB_HOST: feed-db
+      DB_USER: feed
+      DB_PASSWORD: feedpass
+      DB_NAME: feed_db
+      REDIS_HOST: redis
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    depends_on:
+      - feed-db
+      - redis
+      - kafka
+    networks:
+      - socialnet
+    ports:
+      - "8083:8083"
 
-    ########################################################
-    #                    INTERESTS                         #
-    ########################################################
-    Interest:
-      type: object
-      properties:
-        id:
-          type: integer
-          example: 10
-        name:
-          type: string
-          example: "Photography"
-      required:
-        - id
-    InterestCreate:
-      type: object
-      properties:
-        name:
-          type: string
-          example: "Photography"
-      required:
-        - name
-    InterestsUsers:
-      type: object
-      properties:
-        interest_id:
-          type: integer
-          example: 10
-        user_id:
-          type: integer
-          example: 123
-      required:
-        - interest_id
-        - user_id
-    InterestUserCreate:
-      type: object
-      properties:
-        interest_id:
-          type: integer
-          example: 10
-      required:
-        - interest_id
+  feedback-service:
+    container_name: feedback-service
+    build: ./feedback-service
+    environment:
+      DB_HOST: feedback-db
+      DB_USER: feedback
+      DB_PASSWORD: feedbackpass
+      DB_NAME: feedback_db
+      REDIS_HOST: redis
+    depends_on:
+      - feedback-db
+      - redis
+    networks:
+      - socialnet
+    ports:
+      - "8084:8084"
 
-    ########################################################
-    #                     FOLLOWS                          #
-    ########################################################
-    Follows:
-      type: object
-      properties:
-        user_id:
-          type: integer
-          example: 123
-        followed_id:
-          type: integer
-          example: 456
-        created_at:
-          type: string
-          format: date-time
-          example: "2025-03-22T10:15:30Z"
-      required:
-        - user_id
-        - followed_id
-    FollowsCreate:
-      type: object
-      properties:
-        user_id:
-          type: integer
-          example: 123
-        followed_id:
-          type: integer
-          example: 456
-      required:
-        - user_id
-        - followed_id
+  chat-service:
+    container_name: chat-service
+    build: ./chat-service
+    environment:
+      DB_HOST: chat-db
+      DB_USER: chat
+      DB_PASSWORD: chatpass
+      DB_NAME: chat_db
+      REDIS_HOST: redis
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    depends_on:
+      - chat-db
+      - redis
+      - kafka
+    networks:
+      - socialnet
+    ports:
+      - "8085:8085"
 
-    ########################################################
-    #                  RELATIONSHIP                        #
-    ########################################################
-    Relationship:
-      type: object
-      properties:
-        user_id:
-          type: integer
-          example: 123
-        related_id:
-          type: integer
-          example: 999
-        relationship_type:
-          type: integer
-          example: 2
-        created_at:
-          type: string
-          format: date-time
-          example: "2025-03-22T10:20:00Z"
-      required:
-        - user_id
-        - related_id
-        - relationship_type
-    RelationshipCreate:
-      type: object
-      properties:
-        user_id:
-          type: integer
-          example: 123
-        related_id:
-          type: integer
-          example: 999
-        relationship_type:
-          type: integer
-          example: 2
-      required:
-        - user_id
-        - related_id
-        - relationship_type
+  notification-service:
+    container_name: notification-service
+    build: ./notification-service
+    environment:
+      DB_HOST: notification-db
+      DB_USER: notify
+      DB_PASSWORD: notifypass
+      DB_NAME: notification_db
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    depends_on:
+      - notification-db
+      - kafka
+    networks:
+      - socialnet
+    ports:
+      - "8086:8086"
 
-    ########################################################
-    #                     FRIENDS                          #
-    ########################################################
-    Friends:
-      type: object
-      properties:
-        user_id:
-          type: integer
-          example: 123
-        friend_id:
-          type: integer
-          example: 456
-        created_at:
-          type: string
-          format: date-time
-          example: "2025-03-22T10:25:00Z"
-      required:
-        - user_id
-        - friend_id
-    FriendsCreate:
-      type: object
-      properties:
-        user_id:
-          type: integer
-          example: 123
-        friend_id:
-          type: integer
-          example: 456
-      required:
-        - user_id
-        - friend_id
+  search-service:
+    container_name: search-service
+    build: ./search-service
+    environment:
+      ES_HOST: elasticsearch
+    depends_on:
+      - kafka
+    networks:
+      - socialnet
+    ports:
+      - "8087:8087"
 
-    ########################################################
-    #                      ERROR                           #
-    ########################################################
-    Error:
-      type: object
-      properties:
-        code:
-          type: integer
-          format: int32
-          example: 400
-        message:
-          type: string
-          example: "Bad Request"
-      required:
-        - code
-        - message
+  friend-service:
+    container_name: friend-service
+    build: ./friend-service
+    environment:
+      DB_HOST: user-db
+      DB_USER: user
+      DB_PASSWORD: userpass
+      DB_NAME: user_db
+    depends_on:
+      - user-db
+    networks:
+      - socialnet
+    ports:
+      - "8088:8088"
+
+  media-service:
+    container_name: media-service
+    build: ./media-service
+    environment:
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY: minio
+      S3_SECRET_KEY: minio123
+    depends_on:
+      - minio
+    networks:
+      - socialnet
+    ports:
+      - "8089:8089"
+
+  #################################################################
+  #                   API GATEWAY / LOAD BALANCER
+  #################################################################
+  loadbalancer:
+    image: nginx:latest
+    container_name: loadbalancer
+    depends_on:
+      - api-gateway
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "80:80"
+    networks:
+      - socialnet
+
+  api-gateway:
+    container_name: api-gateway
+    build: ./api-gateway
+    environment:
+      USER_SERVICE_URL: http://user-service:8081
+      POST_SERVICE_URL: http://post-service:8082
+      FEED_SERVICE_URL: http://feed-service:8083
+      FEEDBACK_SERVICE_URL: http://feedback-service:8084
+      CHAT_SERVICE_URL: http://chat-service:8085
+      NOTIFICATION_SERVICE_URL: http://notification-service:8086
+      SEARCH_SERVICE_URL: http://search-service:8087
+      FRIEND_SERVICE_URL: http://friend-service:8088
+      MEDIA_SERVICE_URL: http://media-service:8089
+    depends_on:
+      - user-service
+      - post-service
+      - feed-service
+      - feedback-service
+      - chat-service
+      - notification-service
+      - search-service
+      - friend-service
+      - media-service
+    networks:
+      - socialnet
+    ports:
+      - "8080:8080"
+
+  #################################################################
+  #                    SWAGGER UI FOR DOCS
+  #################################################################
+  swagger-ui:
+    image: swaggerapi/swagger-ui:latest
+    container_name: swagger-ui
+    depends_on:
+      - api-gateway
+    ports:
+      - "9002:8080"
+    environment:
+      SWAGGER_JSON: /openapi/combined_openapi.yaml
+    volumes:
+      - ./combined_openapi.yaml:/openapi/combined_openapi.yaml:ro
+    networks:
+      - socialnet
+
+networks:
+  socialnet:
+
+volumes:
+  # Postgres
+  user_db_data:
+  post_db_data:
+  feed_db_data:
+  feedback_db_data:
+  chat_db_data:
+  notification_db_data:
+
+  # Redis
+  redis_data:
+
+  # MinIO
+  minio_data:
