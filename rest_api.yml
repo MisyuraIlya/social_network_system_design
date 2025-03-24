@@ -1,742 +1,1446 @@
-openapi: 3.0.4
+openapi: 3.0.3
 info:
-  title: My Social Network API
-  description: |
-    This is an example of a simple social network API showcasing:
-    - Managing friend relationships (adding/removing).
-    - Viewing user profiles and friends.
-    - Publishing posts (with optional media attachments).
-    - Viewing feeds (home feed and user-specific feed).
-    - Managing chats and messages.
-  version: 1.0.0
+  title: Expanded Social Network API
+  description: |-
+    A comprehensive OpenAPI 3.0 specification for a social network system.  
+    Includes:
+      - Authentication & Authorization
+      - User & Profile Management (CRUD)
+      - Friend Requests (two-stage)
+      - Blocking / Reporting
+      - Posts (CRUD) & Media
+      - Comments, Likes (Feedback)
+      - Notifications
+      - Search
+      - (No Admin endpoints in this version)
+  version: 1.1.0
 
 servers:
-  - url: https://api.my-social-network.com/v1
+  - url: https://noname.social.network/api/v1
 
 tags:
-  - name: User
-    description: Operations related to user profiles
-  - name: Friend
-    description: Operations related to adding/removing friends
-  - name: Post
-    description: Operations related to creating and viewing posts
-  - name: Media
-    description: Operations related to uploading media for posts
-  - name: Chat
-    description: Operations related to creating and viewing chats
-  - name: Message
-    description: Operations related to sending and retrieving messages
+  - name: auth
+    description: Authentication & Authorization
+  - name: user
+    description: User lifecycle (create, read, update, delete)
+  - name: profile
+    description: User profile & relationships
+  - name: friend
+    description: Friend requests & lists
+  - name: block
+    description: Blocking/unblocking users
+  - name: report
+    description: Reporting users or content
+  - name: post
+    description: Post lifecycle (publish, read, edit, delete)
+  - name: feedback
+    description: Likes, comments
+  - name: chat
+    description: Messaging
+  - name: notification
+    description: Notifications
+  - name: search
+    description: Searching content & users
 
 paths:
 
-  ###############################################################
-  #                      USER ENDPOINTS                         #
-  ###############################################################
-  /users/{userId}:
-    get:
-      tags:
-        - User
-      summary: Get user profile
-      description: Retrieves profile information for a single user.
-      operationId: getUserProfile
-      parameters:
-        - name: userId
-          in: path
-          required: true
-          description: ID of the user to retrieve
-          schema:
-            type: string
-      responses:
-        '200':
-          description: Successfully retrieved user profile
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/User'
-        '404':
-          description: User not found
-        default:
-          description: Unexpected error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+  ##################################################
+  # 1. Auth Endpoints
+  ##################################################
 
-  /users:
+  /auth/login:
     post:
       tags:
-        - User
-      summary: Create a new user
-      description: Registers a new user in the system.
-      operationId: createUser
+        - auth
+      summary: User login
+      operationId: login
       requestBody:
-        description: New user details
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/UserCreate'
+              type: object
+              properties:
+                email:
+                  type: string
+                password:
+                  type: string
+              required:
+                - email
+                - password
+      responses:
+        '200':
+          description: Login successful (return token)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token:
+                    type: string
+                  refresh_token:
+                    type: string
+        '401':
+          description: Invalid credentials
+
+  /auth/logout:
+    post:
+      tags:
+        - auth
+      summary: User logout
+      operationId: logout
+      requestBody:
+        required: false
+      responses:
+        '200':
+          description: Logout successful
+        '401':
+          description: Invalid or missing token
+
+  /auth/refresh:
+    post:
+      tags:
+        - auth
+      summary: Refresh an expired token
+      operationId: refresh
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refresh_token:
+                  type: string
+              required:
+                - refresh_token
+      responses:
+        '200':
+          description: New tokens issued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token:
+                    type: string
+                  refresh_token:
+                    type: string
+        '401':
+          description: Invalid token
+
+  /auth/password/reset:
+    post:
+      tags:
+        - auth
+      summary: Request a password reset
+      operationId: requestPasswordReset
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+              required:
+                - email
+      responses:
+        '200':
+          description: Password reset initiated
+        '404':
+          description: Email not found
+
+  ##################################################
+  # 2. User Management
+  ##################################################
+
+  /users:
+    post:
+      tags:
+        - user
+      summary: Create a new user (registration)
+      operationId: createUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                first_name:
+                  type: string
+                second_name:
+                  type: string
+                email:
+                  type: string
+                password:
+                  type: string
+              required:
+                - email
+                - password
       responses:
         '201':
           description: User created successfully
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/User'
+                type: object
+                properties:
+                  id:
+                    type: string
+                  first_name:
+                    type: string
+                  second_name:
+                    type: string
+                  email:
+                    type: string
+                  status:
+                    type: string
         '400':
-          description: Invalid user data
-        default:
-          description: Unexpected error
+          description: Bad request (invalid data)
+
+    get:
+      tags:
+        - user
+      summary: Search or list users
+      operationId: listUsers
+      parameters:
+        - name: query
+          in: query
+          schema:
+            type: string
+          description: Optional search parameter (e.g., name or email)
+        - name: page
+          in: query
+          schema:
+            type: integer
+          description: Page number
+        - name: limit
+          in: query
+          schema:
+            type: integer
+          description: Items per page
+      responses:
+        '200':
+          description: List of users (paginated)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                type: object
+                properties:
+                  users:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        first_name:
+                          type: string
+                        second_name:
+                          type: string
+                        email:
+                          type: string
+                        status:
+                          type: string
+                  pagination:
+                    type: object
+                    properties:
+                      page:
+                        type: integer
+                      limit:
+                        type: integer
+                      total:
+                        type: integer
 
-  ###############################################################
-  #                   FRIEND ENDPOINTS                          #
-  ###############################################################
-  /friends:
-    post:
+  /users/{user_id}:
+    get:
       tags:
-        - Friend
-      summary: Add a friend
-      description: Sends a friend request or directly adds a friend, depending on business rules.
-      operationId: addFriend
+        - user
+      summary: Get user by ID (basic account info)
+      operationId: getUser
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: User object
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  first_name:
+                    type: string
+                  second_name:
+                    type: string
+                  email:
+                    type: string
+                  status:
+                    type: string
+        '404':
+          description: User not found
+
+    patch:
+      tags:
+        - user
+      summary: Update user data
+      operationId: updateUser
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: string
       requestBody:
-        description: Object containing user IDs for creating a friend relationship
         required: true
         content:
           application/json:
-            schema:
-              $ref: '#/components/schemas/Friend'
-      responses:
-        '201':
-          description: Friend added successfully
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Friend'
-        '400':
-          description: Invalid friend data
-        default:
-          description: Unexpected error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-
-  /friends/{friendId}:
-    delete:
-      tags:
-        - Friend
-      summary: Remove a friend
-      description: Removes a friend relationship between two users.
-      operationId: removeFriend
-      parameters:
-        - name: friendId
-          in: path
-          required: true
-          description: The friend relationship ID or the friend user ID
-          schema:
-            type: string
-      responses:
-        '200':
-          description: Friend relationship removed
-        '404':
-          description: Friend relationship not found
-        default:
-          description: Unexpected error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-
-  /users/{userId}/friends:
-    get:
-      tags:
-        - Friend
-      summary: View a user's friends
-      description: Retrieves a list of all friends for the specified user.
-      operationId: getUserFriends
-      parameters:
-        - name: userId
-          in: path
-          required: true
-          description: ID of the user
-          schema:
-            type: string
-      responses:
-        '200':
-          description: A list of friends for the user
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/User'
-        '404':
-          description: User not found
-        default:
-          description: Unexpected error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-
-  ###############################################################
-  #                     POST & FEED ENDPOINTS                   #
-  ###############################################################
-  /posts:
-    post:
-      tags:
-        - Post
-      summary: Publish a new post
-      description: Creates a new post by the authenticated user.
-      operationId: createPost
-      requestBody:
-        description: Post object to be created
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/PostCreate'
-      responses:
-        '201':
-          description: Post created successfully
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Post'
-        '400':
-          description: Invalid post data
-        default:
-          description: Unexpected error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-
-    get:
-      tags:
-        - Post
-      summary: Get all posts
-      description: Retrieves all public posts (optional: you can add filters/pagination).
-      operationId: getAllPosts
-      parameters: []
-      responses:
-        '200':
-          description: A list of all posts
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Post'
-        default:
-          description: Unexpected error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-
-  /feed:
-    get:
-      tags:
-        - Post
-      summary: Get home feed
-      description: Returns the home feed, typically posts from the user and their friends.
-      operationId: getHomeFeed
-      parameters: []
-      responses:
-        '200':
-          description: A list of posts in the user's home feed
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Post'
-        default:
-          description: Unexpected error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-
-  /users/{userId}/posts:
-    get:
-      tags:
-        - Post
-      summary: Get a user's posts
-      description: Returns all posts created by a specific user.
-      operationId: getUserPosts
-      parameters:
-        - name: userId
-          in: path
-          required: true
-          description: ID of the user
-          schema:
-            type: string
-      responses:
-        '200':
-          description: A list of posts from the user
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Post'
-        '404':
-          description: User not found
-        default:
-          description: Unexpected error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-
-  /posts/{postId}:
-    get:
-      tags:
-        - Post
-      summary: Get a single post
-      description: Retrieves a specific post by its ID.
-      operationId: getSinglePost
-      parameters:
-        - name: postId
-          in: path
-          required: true
-          description: ID of the post
-          schema:
-            type: string
-      responses:
-        '200':
-          description: The requested post
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Post'
-        '404':
-          description: Post not found
-        default:
-          description: Unexpected error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-
-  ###############################################################
-  #                       MEDIA ENDPOINT                        #
-  ###############################################################
-  /posts/{postId}/media:
-    post:
-      tags:
-        - Media
-      summary: Upload media for a post
-      description: Attaches an image (or other media) to an existing post.
-      operationId: uploadMedia
-      parameters:
-        - name: postId
-          in: path
-          required: true
-          description: ID of the post
-          schema:
-            type: string
-      requestBody:
-        description: Media file to upload
-        required: true
-        content:
-          multipart/form-data:
             schema:
               type: object
               properties:
-                file:
+                first_name:
                   type: string
-                  format: binary
+                second_name:
+                  type: string
+                email:
+                  type: string
+                status:
+                  type: string
       responses:
         '200':
-          description: Media uploaded successfully
+          description: User updated
+        '400':
+          description: Invalid data
+        '404':
+          description: User not found
+
+    delete:
+      tags:
+        - user
+      summary: Delete or deactivate a user account
+      operationId: deleteUser
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: User deleted or deactivated
+        '404':
+          description: User not found
+
+  ##################################################
+  # 3. Profile Endpoints
+  ##################################################
+
+  /profile/{profile_id}:
+    get:
+      tags:
+        - profile
+      summary: Get user profile (public info, extended details)
+      operationId: getProfile
+      parameters:
+        - name: profile_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Profile object
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Media'
+                type: object
+                properties:
+                  profile_id:
+                    type: string
+                  user_id:
+                    type: string
+                  display_name:
+                    type: string
+                  bio:
+                    type: string
+                  location:
+                    type: string
+                  avatar_url:
+                    type: string
+
+    patch:
+      tags:
+        - profile
+      summary: Update profile details
+      operationId: updateProfile
+      parameters:
+        - name: profile_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                display_name:
+                  type: string
+                bio:
+                  type: string
+                location:
+                  type: string
+                avatar_url:
+                  type: string
+      responses:
+        '200':
+          description: Profile updated
+        '404':
+          description: Profile not found
+
+  ##################################################
+  # 4. Friend Requests (two-stage)
+  ##################################################
+
+  /friendrequests:
+    post:
+      tags:
+        - friend
+      summary: Send a friend request
+      operationId: sendFriendRequest
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                from_user_id:
+                  type: string
+                to_user_id:
+                  type: string
+      responses:
+        '201':
+          description: Friend request created
         '400':
-          description: No file uploaded or invalid file
+          description: Invalid data or already friends
+
+    get:
+      tags:
+        - friend
+      summary: Get list of friend requests (incoming/outgoing)
+      operationId: listFriendRequests
+      parameters:
+        - name: user_id
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [incoming, outgoing]
+            default: incoming
+      responses:
+        '200':
+          description: List of friend requests
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  friend_requests:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        request_id:
+                          type: string
+                        from_user_id:
+                          type: string
+                        to_user_id:
+                          type: string
+                        status:
+                          type: string
+                        created_at:
+                          type: string
+                          format: date-time
+
+  /friendrequests/{request_id}:
+    patch:
+      tags:
+        - friend
+      summary: Accept or reject a friend request
+      operationId: updateFriendRequest
+      parameters:
+        - name: request_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  type: string
+                  enum: [accepted, rejected]
+      responses:
+        '200':
+          description: Friend request updated
+        '404':
+          description: Request not found
+
+  ##################################################
+  # 5. Blocking & Reporting
+  ##################################################
+
+  /block:
+    post:
+      tags:
+        - block
+      summary: Block a user
+      operationId: blockUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                blocker_id:
+                  type: string
+                blocked_id:
+                  type: string
+      responses:
+        '201':
+          description: User blocked
+        '400':
+          description: Invalid data
+
+    delete:
+      tags:
+        - block
+      summary: Unblock a user
+      operationId: unblockUser
+      parameters:
+        - name: blocker_id
+          in: query
+          schema:
+            type: string
+        - name: blocked_id
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: User unblocked
+        '404':
+          description: Block relationship not found
+
+  /report:
+    post:
+      tags:
+        - report
+      summary: Report a user or content
+      operationId: reportUserOrContent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reporter_id:
+                  type: string
+                reported_id:
+                  type: string
+                reason:
+                  type: string
+      responses:
+        '201':
+          description: Report filed
+        '400':
+          description: Invalid data
+
+  ##################################################
+  # 6. Posts (Advanced)
+  ##################################################
+
+  /posts:
+    get:
+      tags:
+        - post
+      summary: List all or search posts (optional)
+      operationId: listPosts
+      parameters:
+        - name: user_id
+          in: query
+          schema:
+            type: string
+            description: Filter posts by user
+        - name: page
+          in: query
+          schema:
+            type: integer
+        - name: limit
+          in: query
+          schema:
+            type: integer
+        - name: query
+          in: query
+          schema:
+            type: string
+            description: Search text
+      responses:
+        '200':
+          description: List of posts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  posts:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        post_id:
+                          type: string
+                        user_id:
+                          type: string
+                        text:
+                          type: string
+                        created_at:
+                          type: string
+                          format: date-time
+                        updated_at:
+                          type: string
+                          format: date-time
+                  pagination:
+                    type: object
+                    properties:
+                      page:
+                        type: integer
+                      limit:
+                        type: integer
+                      total:
+                        type: integer
+
+    post:
+      tags:
+        - post
+      summary: Create a new post
+      operationId: createPost
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                user_id:
+                  type: string
+                text:
+                  type: string
+                media_urls:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        '201':
+          description: Post created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  post_id:
+                    type: string
+                  user_id:
+                    type: string
+                  text:
+                    type: string
+                  created_at:
+                    type: string
+                  media_urls:
+                    type: array
+                    items:
+                      type: string
+
+  /posts/{post_id}:
+    get:
+      tags:
+        - post
+      summary: Get a specific post
+      operationId: getPost
+      parameters:
+        - name: post_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Post details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  post_id:
+                    type: string
+                  user_id:
+                    type: string
+                  text:
+                    type: string
+                  media_urls:
+                    type: array
+                    items:
+                      type: string
+                  created_at:
+                    type: string
+                  updated_at:
+                    type: string
+
+    patch:
+      tags:
+        - post
+      summary: Update a post
+      operationId: updatePost
+      parameters:
+        - name: post_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                text:
+                  type: string
+                media_urls:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        '200':
+          description: Post updated
         '404':
           description: Post not found
-        default:
-          description: Unexpected error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
 
-  ###############################################################
-  #                     CHAT & MESSAGE ENDPOINTS                #
-  ###############################################################
-  /chats:
-    get:
+    delete:
       tags:
-        - Chat
-      summary: Get all chats for the authenticated user
-      description: Retrieves a list of chats/dialogs for the current user.
-      operationId: getUserChats
-      parameters: []
-      responses:
-        '200':
-          description: A list of chat sessions
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Chat'
-        default:
-          description: Unexpected error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-
-    post:
-      tags:
-        - Chat
-      summary: Create a new chat
-      description: Starts a new chat session between two or more users.
-      operationId: createChat
-      requestBody:
-        description: Chat creation details (participant IDs, etc.)
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ChatCreate'
-      responses:
-        '201':
-          description: Chat created successfully
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Chat'
-        '400':
-          description: Invalid chat data
-        default:
-          description: Unexpected error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-
-  /chats/{chatId}/messages:
-    get:
-      tags:
-        - Message
-      summary: View messages in a chat
-      description: Retrieves messages from a specified chat.
-      operationId: getChatMessages
+        - post
+      summary: Delete a post
+      operationId: deletePost
       parameters:
-        - name: chatId
+        - name: post_id
           in: path
           required: true
-          description: ID of the chat
           schema:
             type: string
       responses:
         '200':
-          description: A list of messages in the chat
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Message'
+          description: Post deleted
         '404':
-          description: Chat not found
-        default:
-          description: Unexpected error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+          description: Post not found
 
+  ##################################################
+  # 7. Feedback (Likes & Comments)
+  ##################################################
+
+  /posts/{post_id}/likes:
     post:
       tags:
-        - Message
-      summary: Send a new message in a chat
-      description: Sends a message from the current user to the specified chat.
+        - feedback
+      summary: Like a post
+      operationId: likePost
+      parameters:
+        - name: post_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                user_id:
+                  type: string
+      responses:
+        '200':
+          description: Post liked
+        '400':
+          description: Already liked or invalid data
+
+    delete:
+      tags:
+        - feedback
+      summary: Unlike a post
+      operationId: unlikePost
+      parameters:
+        - name: post_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: user_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Post unliked
+        '404':
+          description: Like not found
+
+  /posts/{post_id}/comments:
+    post:
+      tags:
+        - feedback
+      summary: Add a comment to a post
+      operationId: addComment
+      parameters:
+        - name: post_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                user_id:
+                  type: string
+                text:
+                  type: string
+                parent_comment_id:
+                  type: string
+      responses:
+        '201':
+          description: Comment created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  comment_id:
+                    type: string
+                  post_id:
+                    type: string
+                  user_id:
+                    type: string
+                  text:
+                    type: string
+                  parent_comment_id:
+                    type: string
+        '400':
+          description: Invalid data
+
+    get:
+      tags:
+        - feedback
+      summary: Retrieve comments for a post
+      operationId: getComments
+      parameters:
+        - name: post_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+        - name: limit
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: List of comments
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  comments:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        comment_id:
+                          type: string
+                        user_id:
+                          type: string
+                        text:
+                          type: string
+                        parent_comment_id:
+                          type: string
+                        created_at:
+                          type: string
+                          format: date-time
+                  pagination:
+                    type: object
+                    properties:
+                      page:
+                        type: integer
+                      limit:
+                        type: integer
+                      total:
+                        type: integer
+
+  /posts/{post_id}/comments/{comment_id}:
+    patch:
+      tags:
+        - feedback
+      summary: Edit a comment
+      operationId: editComment
+      parameters:
+        - name: post_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: comment_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                text:
+                  type: string
+      responses:
+        '200':
+          description: Comment updated
+        '404':
+          description: Comment not found
+
+    delete:
+      tags:
+        - feedback
+      summary: Remove a comment
+      operationId: removeComment
+      parameters:
+        - name: post_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: comment_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Comment deleted
+        '404':
+          description: Comment not found
+
+  /comments/{comment_id}/likes:
+    post:
+      tags:
+        - feedback
+      summary: Like a comment
+      operationId: likeComment
+      parameters:
+        - name: comment_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                user_id:
+                  type: string
+      responses:
+        '200':
+          description: Comment liked
+        '400':
+          description: Already liked or invalid data
+
+    delete:
+      tags:
+        - feedback
+      summary: Unlike a comment
+      operationId: unlikeComment
+      parameters:
+        - name: comment_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: user_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Comment unliked
+        '404':
+          description: Like not found
+
+  ##################################################
+  # 8. Chat Endpoints
+  ##################################################
+
+  /profile/{profile_id}/chats:
+    get:
+      tags:
+        - chat
+      summary: View user chats
+      operationId: viewUserChats
+      parameters:
+        - name: profile_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Chats viewed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  chats:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        chat_type:
+                          type: string
+                        users_id:
+                          type: array
+                          items:
+                            type: string
+                        last_messages:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              message_id:
+                                type: string
+                              text:
+                                type: string
+                              created_at:
+                                type: string
+
+  /profile/{profile_id}/chat/{chat_id}/messages:
+    post:
+      tags:
+        - chat
+      summary: Send messages in chats
       operationId: sendChatMessage
       parameters:
-        - name: chatId
+        - name: profile_id
           in: path
           required: true
-          description: ID of the chat
+          schema:
+            type: string
+        - name: chat_id
+          in: path
+          required: true
           schema:
             type: string
       requestBody:
-        description: Message content
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/MessageCreate'
+              type: object
+              properties:
+                text:
+                  type: string
+                reply_to:
+                  type: string
+                media_urls:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        '200':
+          description: Message sent
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message_id:
+                    type: string
+                  text:
+                    type: string
+                  created_at:
+                    type: string
+
+  /user/{user_id}/chat/{chat_id}/messages:
+    get:
+      tags:
+        - chat
+      summary: Read messages in chats
+      operationId: readChatMessages
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: chat_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+        - name: limit
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Messages retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  messages:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        message_id:
+                          type: string
+                        user_id:
+                          type: string
+                        text:
+                          type: string
+                        created_at:
+                          type: string
+                        reply_id:
+                          type: string
+                  pagination:
+                    type: object
+                    properties:
+                      page:
+                        type: integer
+                      limit:
+                        type: integer
+                      total:
+                        type: integer
+
+  ##################################################
+  # 9. Notifications
+  ##################################################
+
+  /notifications:
+    get:
+      tags:
+        - notification
+      summary: Get notifications
+      operationId: getNotifications
+      parameters:
+        - name: user_id
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+        - name: limit
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: List of notifications
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  notifications:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        notification_id:
+                          type: string
+                        user_id:
+                          type: string
+                        type:
+                          type: string
+                        message:
+                          type: string
+                        status:
+                          type: string
+                        created_at:
+                          type: string
+                          format: date-time
+                  pagination:
+                    type: object
+                    properties:
+                      page:
+                        type: integer
+                      limit:
+                        type: integer
+                      total:
+                        type: integer
+
+    post:
+      tags:
+        - notification
+      summary: Create a notification
+      operationId: createNotification
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                user_id:
+                  type: string
+                message:
+                  type: string
+                type:
+                  type: string
       responses:
         '201':
-          description: Message sent successfully
+          description: Notification created
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Message'
-        '400':
-          description: Invalid message data
+                type: object
+                properties:
+                  notification_id:
+                    type: string
+                  user_id:
+                    type: string
+                  message:
+                    type: string
+                  type:
+                    type: string
+                  status:
+                    type: string
+
+  /notifications/{notification_id}:
+    patch:
+      tags:
+        - notification
+      summary: Mark notification as read or update
+      operationId: updateNotification
+      parameters:
+        - name: notification_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  type: string
+                  enum: [read, unread, dismissed]
+      responses:
+        '200':
+          description: Notification updated
         '404':
-          description: Chat not found
-        default:
-          description: Unexpected error
+          description: Notification not found
+
+    delete:
+      tags:
+        - notification
+      summary: Dismiss or remove a notification
+      operationId: deleteNotification
+      parameters:
+        - name: notification_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Notification deleted
+        '404':
+          description: Notification not found
+
+  ##################################################
+  # 10. Search Endpoints
+  ##################################################
+
+  /search/users:
+    get:
+      tags:
+        - search
+      summary: Search for users by name, email
+      operationId: searchUsers
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+        - name: limit
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: User search results
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                type: object
+                properties:
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        user_id:
+                          type: string
+                        first_name:
+                          type: string
+                        second_name:
+                          type: string
 
-components:
-  schemas:
-    ###############################################################
-    #                        USER SCHEMAS                         #
-    ###############################################################
-    User:
-      type: object
-      properties:
-        id:
-          type: string
-          example: "user123"
-        username:
-          type: string
-          example: "john_doe"
-        firstName:
-          type: string
-          example: "John"
-        lastName:
-          type: string
-          example: "Doe"
-        email:
-          type: string
-          example: "john@example.com"
-        avatarUrl:
-          type: string
-          format: uri
-          example: "https://example.com/avatars/john_doe.png"
-        createdAt:
-          type: string
-          format: date-time
-          example: "2025-03-21T10:15:30Z"
-      required:
-        - id
-        - username
-        - email
-
-    UserCreate:
-      type: object
-      properties:
-        username:
-          type: string
-          example: "john_doe"
-        firstName:
-          type: string
-          example: "John"
-        lastName:
-          type: string
-          example: "Doe"
-        email:
-          type: string
-          example: "john@example.com"
-        password:
-          type: string
-          format: password
-          example: "SecretPassword123"
-      required:
-        - username
-        - email
-        - password
-
-    ###############################################################
-    #                      FRIEND SCHEMAS                         #
-    ###############################################################
-    Friend:
-      type: object
-      properties:
-        userId:
-          type: string
-          example: "user123"
-        friendId:
-          type: string
-          example: "friend456"
-      required:
-        - userId
-        - friendId
-
-    ###############################################################
-    #                       POST SCHEMAS                          #
-    ###############################################################
-    Post:
-      type: object
-      properties:
-        id:
-          type: string
-          example: "post789"
-        userId:
-          type: string
-          example: "user123"
-        content:
-          type: string
-          example: "Hello world! This is my first post."
-        mediaUrls:
-          type: array
-          items:
+  /search/posts:
+    get:
+      tags:
+        - search
+      summary: Search posts by text, hashtags, etc.
+      operationId: searchPosts
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
             type: string
-            format: uri
-          example: ["https://example.com/uploads/img1.png"]
-        createdAt:
-          type: string
-          format: date-time
-          example: "2025-03-21T10:15:30Z"
-      required:
-        - id
-        - userId
-        - content
+        - name: page
+          in: query
+          schema:
+            type: integer
+        - name: limit
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Post search results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        post_id:
+                          type: string
+                        user_id:
+                          type: string
+                        text:
+                          type: string
+                        created_at:
+                          type: string
+                          format: date-time
 
-    PostCreate:
-      type: object
-      properties:
-        userId:
-          type: string
-          example: "user123"
-        content:
-          type: string
-          example: "Hello world!"
-      required:
-        - userId
-        - content
+# --------------------------------------------------------------------
+# Custom extension to embed PlantUML diagrams for the system design
+# --------------------------------------------------------------------
+x-architecture-diagrams:
+  c1_level: |
+    @startuml
+    !include <C4/C4_Container>
 
-    ###############################################################
-    #                       MEDIA SCHEMAS                         #
-    ###############################################################
-    Media:
-      type: object
-      properties:
-        mediaId:
-          type: string
-          example: "media001"
-        postId:
-          type: string
-          example: "post789"
-        url:
-          type: string
-          format: uri
-          example: "https://example.com/uploads/img1.png"
-        uploadedAt:
-          type: string
-          format: date-time
-          example: "2025-03-21T10:20:00Z"
-      required:
-        - mediaId
-        - postId
-        - url
+    Person(client, "Client")
+    Container(loadBalancer, "Load Balancer", "Nginx")
+    Container(apiGateway, "API Gateway")
+    
+    Container(userService, "User Service", "Handles user CRUD, auth, profile")
+    Container(friendService, "Friend Service", "Handles friend requests, relationships")
+    Container(postService, "Post Service", "Handles posts CRUD")
+    Container(feedService, "Feed Service", "Manages user/home feed")
+    Container(feedbackService, "Feedback Service", "Likes & Comments")
+    Container(chatService, "Chat Service", "Messages & dialogs")
+    Container(notificationService, "Notification Service", "Handles notifications")
+    Container(searchService, "Search Service", "Text/hashtag search")
 
-    ###############################################################
-    #                       CHAT SCHEMAS                          #
-    ###############################################################
-    Chat:
-      type: object
-      properties:
-        chatId:
-          type: string
-          example: "chatABC"
-        participantIds:
-          type: array
-          items:
-            type: string
-          example: ["user123", "user456"]
-        lastMessage:
-          type: string
-          example: "How are you?"
-        updatedAt:
-          type: string
-          format: date-time
-          example: "2025-03-21T10:20:00Z"
-      required:
-        - chatId
-        - participantIds
+    System_Boundary(mediaSystem, "Media Service") {
+        Container(mediaService, "Media Service", "Stores & retrieves media")
+        ContainerDb(s3, "S3", "Blob storage")
+    }
 
-    ChatCreate:
-      type: object
-      properties:
-        participantIds:
-          type: array
-          items:
-            type: string
-          example: ["user123", "user456"]
-      required:
-        - participantIds
+    Rel(client, loadBalancer, "HTTP", "REST")
+    Rel(loadBalancer, apiGateway, "HTTP", "REST")
 
-    ###############################################################
-    #                      MESSAGE SCHEMAS                        #
-    ###############################################################
-    Message:
-      type: object
-      properties:
-        messageId:
-          type: string
-          example: "msg001"
-        chatId:
-          type: string
-          example: "chatABC"
-        senderId:
-          type: string
-          example: "user123"
-        content:
-          type: string
-          example: "Hello!"
-        sentAt:
-          type: string
-          format: date-time
-          example: "2025-03-21T10:30:15Z"
-      required:
-        - messageId
-        - chatId
-        - senderId
-        - content
+    Rel(apiGateway, userService, "Manage users, auth, profiles", "REST")
+    Rel(apiGateway, friendService, "Friend requests", "REST")
+    Rel(apiGateway, postService, "Create/update posts", "REST")
+    Rel(apiGateway, feedService, "Get user/home feed", "REST")
+    Rel(apiGateway, feedbackService, "Likes & comments", "REST")
+    Rel(apiGateway, chatService, "Messages & dialogs", "REST")
+    Rel(apiGateway, notificationService, "Push/get notifications", "REST")
+    Rel(apiGateway, searchService, "Search queries", "REST")
 
-    MessageCreate:
-      type: object
-      properties:
-        senderId:
-          type: string
-          example: "user123"
-        content:
-          type: string
-          example: "Hello!"
-      required:
-        - senderId
-        - content
+    Rel(apiGateway, mediaService, "Upload media", "REST")
+    Rel(mediaService, s3, "Blob storage ops")
 
-    ###############################################################
-    #                        ERROR SCHEMA                         #
-    ###############################################################
-    Error:
-      type: object
-      properties:
-        code:
-          type: integer
-          format: int32
-          example: 400
-        message:
-          type: string
-          example: "Bad Request"
-      required:
-        - code
-        - message
-
-  securitySchemes:
-    bearerAuth:
-      type: http
-      scheme: bearer
-      bearerFormat: JWT
+    @enduml

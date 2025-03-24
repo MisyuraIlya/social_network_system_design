@@ -1,62 +1,51 @@
 package user
 
-import "errors"
+import (
+	"gorm.io/gorm"
+)
 
-type Repository interface {
-	Create(u User) (User, error)
-	GetAll() ([]User, error)
-	GetByID(id int) (User, error)
-	Update(u User) (User, error)
-	Delete(id int) error
+type IUserRepository interface {
+	Create(u *User) (*User, error)
+	FindByEmail(email string) (*User, error)
+	FindAll() ([]User, error)
+	FindByID(id uint) (*User, error)
 }
 
-type InMemoryRepository struct {
-	users  map[int]User
-	nextID int
+type UserRepository struct {
+	DB *gorm.DB
 }
 
-func NewInMemoryRepository() *InMemoryRepository {
-	return &InMemoryRepository{
-		users:  make(map[int]User),
-		nextID: 1,
-	}
+func NewUserRepository(db *gorm.DB) IUserRepository {
+	return &UserRepository{DB: db}
 }
 
-func (r *InMemoryRepository) Create(u User) (User, error) {
-	u.ID = r.nextID
-	r.users[r.nextID] = u
-	r.nextID++
-	return u, nil
-}
-
-func (r *InMemoryRepository) GetAll() ([]User, error) {
-	all := make([]User, 0, len(r.users))
-	for _, user := range r.users {
-		all = append(all, user)
-	}
-	return all, nil
-}
-
-func (r *InMemoryRepository) GetByID(id int) (User, error) {
-	u, ok := r.users[id]
-	if !ok {
-		return User{}, errors.New("user not found")
+func (repo *UserRepository) Create(u *User) (*User, error) {
+	if err := repo.DB.Create(u).Error; err != nil {
+		return nil, err
 	}
 	return u, nil
 }
 
-func (r *InMemoryRepository) Update(u User) (User, error) {
-	if _, ok := r.users[u.ID]; !ok {
-		return User{}, errors.New("user not found")
+func (repo *UserRepository) FindByEmail(email string) (*User, error) {
+	var user User
+	if err := repo.DB.Where("email = ?", email).First(&user).Error; err != nil {
+		return nil, err
 	}
-	r.users[u.ID] = u
-	return u, nil
+	return &user, nil
 }
 
-func (r *InMemoryRepository) Delete(id int) error {
-	if _, ok := r.users[id]; !ok {
-		return errors.New("user not found")
+func (repo *UserRepository) FindAll() ([]User, error) {
+	var users []User
+	if err := repo.DB.Find(&users).Error; err != nil {
+		return nil, err
 	}
-	delete(r.users, id)
-	return nil
+	return users, nil
+}
+
+func (repo *UserRepository) FindByID(id uint) (*User, error) {
+	var user User
+	if err := repo.DB.First(&user, id).Error; err != nil {
+		return nil, err
+	}
+	return &user, nil
 }

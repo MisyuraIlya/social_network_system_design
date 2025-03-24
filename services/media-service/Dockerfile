@@ -1,14 +1,13 @@
-FROM golang:1.20-alpine AS build
+# service-media/Dockerfile
+FROM golang:1.20-alpine AS builder
 WORKDIR /app
-
 COPY go.mod go.sum ./
 RUN go mod download
-
 COPY . .
-RUN go build -o media-service main.go
+RUN CGO_ENABLED=0 go build -o service cmd/main.go
 
-FROM alpine:3.17
+FROM alpine:3.16
 WORKDIR /app
-COPY --from=build /app/media-service /app/
-EXPOSE 8002
-ENTRYPOINT ["/app/media-service"]
+COPY --from=builder /app/service /app/service
+EXPOSE 8084
+CMD ["/app/service"]

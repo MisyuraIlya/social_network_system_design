@@ -1,115 +1,114 @@
 package user
 
 import (
-	"errors"
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
-	"users-service/pkg/req"
-	"users-service/pkg/res"
 )
 
-type Handler struct {
-	Service Service
+type UserHandler struct {
+	Service IUserService
 }
 
-func (h *Handler) HandleUsers(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		h.getAllUsers(w, r)
-	case http.MethodPost:
-		h.createUser(w, r)
-	default:
-		res.Json(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-	}
+func RegisterRoutes(mux *http.ServeMux, handler *UserHandler) {
+	mux.HandleFunc("/users", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			handler.ListUsers(w, r)
+		case http.MethodPost:
+			handler.Register(w, r)
+		default:
+			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		}
+	})
+
+	mux.HandleFunc("/users/login", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		handler.Login(w, r)
+	})
+
+	mux.HandleFunc("/users/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+		if len(pathParts) < 2 {
+			http.Error(w, "User ID missing", http.StatusBadRequest)
+			return
+		}
+		idStr := pathParts[1]
+		handler.GetUser(w, r, idStr)
+	})
 }
 
-func (h *Handler) HandleUserByID(w http.ResponseWriter, r *http.Request) {
-	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/users/"), "/")
-	if len(parts) < 1 || parts[0] == "" {
-		res.Json(w, "User ID is required", http.StatusBadRequest)
+func NewUserHandler(svc IUserService) *UserHandler {
+	return &UserHandler{Service: svc}
+}
+
+func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
+	users, err := h.Service.ListAll()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	idStr := parts[0]
+	json.NewEncoder(w).Encode(users)
+}
+
+func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+		Name     string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	user, err := h.Service.Register(body.Email, body.Password, body.Name)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(user)
+}
+
+func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	user, err := h.Service.Login(body.Email, body.Password)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message":   "login successful",
+		"user_id":   user.ID,
+		"user_name": user.Name,
+	})
+}
+
+func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request, idStr string) {
 	id, err := strconv.Atoi(idStr)
 	if err != nil {
-		res.Json(w, "Invalid user ID", http.StatusBadRequest)
+		http.Error(w, "Invalid user ID", http.StatusBadRequest)
 		return
 	}
-
-	switch r.Method {
-	case http.MethodGet:
-		h.getUserByID(w, r, id)
-	case http.MethodPut:
-		h.updateUser(w, r, id)
-	case http.MethodDelete:
-		h.deleteUser(w, r, id)
-	default:
-		res.Json(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-	}
-}
-
-func (h *Handler) getAllUsers(w http.ResponseWriter, r *http.Request) {
-	users, err := h.Service.GetAllUsers()
+	usr, err := h.Service.GetByID(uint(id))
 	if err != nil {
-		res.Json(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "User not found", http.StatusNotFound)
 		return
 	}
-	res.Json(w, users, http.StatusOK)
-}
-
-func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
-	payload, err := req.HandleBody[UserCreatePayload](&w, r)
-	if err != nil {
-		return // error already handled in req.HandleBody
-	}
-	newUser, err := h.Service.CreateUser(*payload)
-	if err != nil {
-		res.Json(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	res.Json(w, newUser, http.StatusCreated)
-}
-
-func (h *Handler) getUserByID(w http.ResponseWriter, r *http.Request, id int) {
-	user, err := h.Service.GetUserByID(id)
-	if err != nil {
-		if errors.Is(err, errors.New("user not found")) {
-			res.Json(w, err.Error(), http.StatusNotFound)
-		} else {
-			res.Json(w, err.Error(), http.StatusInternalServerError)
-		}
-		return
-	}
-	res.Json(w, user, http.StatusOK)
-}
-
-func (h *Handler) updateUser(w http.ResponseWriter, r *http.Request, id int) {
-	payload, err := req.HandleBody[UserUpdatePayload](&w, r)
-	if err != nil {
-		return
-	}
-	updatedUser, err := h.Service.UpdateUser(id, *payload)
-	if err != nil {
-		if errors.Is(err, errors.New("user not found")) {
-			res.Json(w, err.Error(), http.StatusNotFound)
-		} else {
-			res.Json(w, err.Error(), http.StatusInternalServerError)
-		}
-		return
-	}
-	res.Json(w, updatedUser, http.StatusOK)
-}
-
-func (h *Handler) deleteUser(w http.ResponseWriter, r *http.Request, id int) {
-	err := h.Service.DeleteUser(id)
-	if err != nil {
-		if errors.Is(err, errors.New("user not found")) {
-			res.Json(w, err.Error(), http.StatusNotFound)
-		} else {
-			res.Json(w, err.Error(), http.StatusInternalServerError)
-		}
-		return
-	}
-	res.Json(w, "User deleted successfully", http.StatusOK)
+	json.NewEncoder(w).Encode(usr)
 }

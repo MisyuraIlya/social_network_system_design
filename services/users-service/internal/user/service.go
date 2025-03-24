@@ -1,51 +1,50 @@
 package user
 
-type Service interface {
-	CreateUser(payload UserCreatePayload) (User, error)
-	GetAllUsers() ([]User, error)
-	GetUserByID(id int) (User, error)
-	UpdateUser(id int, payload UserUpdatePayload) (User, error)
-	DeleteUser(id int) error
+import "errors"
+
+type IUserService interface {
+	Register(email, password, name string) (*User, error)
+	Login(email, password string) (*User, error)
+	ListAll() ([]User, error)
+	GetByID(id uint) (*User, error)
 }
 
-type service struct {
-	repo Repository
+type UserService struct {
+	repo IUserRepository
 }
 
-func NewService(repo Repository) Service {
-	return &service{repo: repo}
+func NewUserService(repo IUserRepository) IUserService {
+	return &UserService{repo: repo}
 }
 
-func (s *service) CreateUser(payload UserCreatePayload) (User, error) {
-	user := User{
-		Name:  payload.Name,
-		Email: payload.Email,
+func (s *UserService) Register(email, password, name string) (*User, error) {
+	existing, _ := s.repo.FindByEmail(email)
+	if existing != nil {
+		return nil, errors.New("user already exists")
 	}
-	return s.repo.Create(user)
+	newUser := &User{
+		Email:    email,
+		Password: password,
+		Name:     name,
+	}
+	return s.repo.Create(newUser)
 }
 
-func (s *service) GetAllUsers() ([]User, error) {
-	return s.repo.GetAll()
-}
-
-func (s *service) GetUserByID(id int) (User, error) {
-	return s.repo.GetByID(id)
-}
-
-func (s *service) UpdateUser(id int, payload UserUpdatePayload) (User, error) {
-	existing, err := s.repo.GetByID(id)
+func (s *UserService) Login(email, password string) (*User, error) {
+	usr, err := s.repo.FindByEmail(email)
 	if err != nil {
-		return User{}, err
+		return nil, errors.New("wrong credentials")
 	}
-	if payload.Name != "" {
-		existing.Name = payload.Name
+	if usr.Password != password {
+		return nil, errors.New("wrong password")
 	}
-	if payload.Email != "" {
-		existing.Email = payload.Email
-	}
-	return s.repo.Update(existing)
+	return usr, nil
 }
 
-func (s *service) DeleteUser(id int) error {
-	return s.repo.Delete(id)
+func (s *UserService) ListAll() ([]User, error) {
+	return s.repo.FindAll()
+}
+
+func (s *UserService) GetByID(id uint) (*User, error) {
+	return s.repo.FindByID(id)
 }

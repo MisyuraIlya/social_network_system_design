@@ -1,0 +1,15 @@
+@startuml
+!include <C4/C4_Container>
+
+Container(apiGateway, "API Gateway")
+Container(cdn, "CDN")
+
+System_Boundary(mediaSystem, "Media Service") {
+    Container(mediaService, "Media Service", "Handling media files")
+    ContainerDb(s3, "S3", "Blob storage")
+}
+
+Rel(apiGateway, mediaService, "Uploads media files", "REST")
+Rel(mediaService, s3, "Uploads media files")
+Rel(cdn, s3, "Downloads media from origin s3")
+@enduml

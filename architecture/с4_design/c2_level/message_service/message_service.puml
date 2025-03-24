@@ -1,0 +1,24 @@
+@startuml
+!include <C4/C4_Container>
+
+Container(apiGateway, "API Gateway")
+Container(kafka, "Kafka", "")
+Container(s3, "MediaService", "")
+Container(notifycationService, "Notification service", "")
+
+
+System_Boundary(MessageSystem, "Message Service") {
+    Container(MessageService, "Message Service", "Processes messages")
+    ContainerDb(redis, "redis")
+    ContainerDb(pgSQL, "pgSQL")
+}
+
+Rel(apiGateway, MessageService, "request", "REST")
+Rel(MessageService, redis, "store popular chats")
+Rel(MessageService, pgSQL, "store messages")
+Rel(MessageService, s3, "upload media")
+Rel(MessageService, kafka, "new message")
+Rel(kafka, notifycationService, "")
+
+
+@enduml
