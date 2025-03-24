@@ -4,15 +4,15 @@ services:
   #################################################################
   #                           DATABASES                           #
   #################################################################
-  user-db:
+  users-db:
     image: postgres:15
-    container_name: user-db
+    container_name: users-db
     environment:
       POSTGRES_USER: user
       POSTGRES_PASSWORD: userpass
-      POSTGRES_DB: user_db
+      POSTGRES_DB: users_db
     volumes:
-      - user_db_data:/var/lib/postgresql/data
+      - users_db_data:/var/lib/postgresql/data
     networks:
       - socialnet
 
@@ -40,44 +40,20 @@ services:
     networks:
       - socialnet
 
-  feedback-db:
+  message-db:
     image: postgres:15
-    container_name: feedback-db
+    container_name: message-db
     environment:
-      POSTGRES_USER: feedback
-      POSTGRES_PASSWORD: feedbackpass
-      POSTGRES_DB: feedback_db
+      POSTGRES_USER: message
+      POSTGRES_PASSWORD: messagepass
+      POSTGRES_DB: message_db
     volumes:
-      - feedback_db_data:/var/lib/postgresql/data
-    networks:
-      - socialnet
-
-  chat-db:
-    image: postgres:15
-    container_name: chat-db
-    environment:
-      POSTGRES_USER: chat
-      POSTGRES_PASSWORD: chatpass
-      POSTGRES_DB: chat_db
-    volumes:
-      - chat_db_data:/var/lib/postgresql/data
-    networks:
-      - socialnet
-
-  notification-db:
-    image: postgres:15
-    container_name: notification-db
-    environment:
-      POSTGRES_USER: notify
-      POSTGRES_PASSWORD: notifypass
-      POSTGRES_DB: notification_db
-    volumes:
-      - notification_db_data:/var/lib/postgresql/data
+      - message_db_data:/var/lib/postgresql/data
     networks:
       - socialnet
 
   #################################################################
-  #                           CACHES / QUEUES                     #
+  #                       CACHE / S3 / QUEUE                      #
   #################################################################
   redis:
     image: redis:7
@@ -88,17 +64,18 @@ services:
     networks:
       - socialnet
 
-  kafka:
-    image: bitnami/kafka:latest
-    container_name: kafka
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    command: server /data --console-address ":9001"
     environment:
-      - KAFKA_BROKER_ID=1
-      - KAFKA_ZOOKEEPER_CONNECT=zookeeper:2181
-      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
-    depends_on:
-      - zookeeper
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: minio123
     ports:
-      - "9092:9092"
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
     networks:
       - socialnet
 
@@ -112,37 +89,34 @@ services:
     networks:
       - socialnet
 
-  #################################################################
-  #                           MINIO / S3                          #
-  #################################################################
-  minio:
-    image: minio/minio:latest
-    container_name: minio
-    command: server /data --console-address ":9001"
+  kafka:
+    image: bitnami/kafka:latest
+    container_name: kafka
     environment:
-      MINIO_ROOT_USER: minio
-      MINIO_ROOT_PASSWORD: minio123
+      - KAFKA_BROKER_ID=1
+      - KAFKA_ZOOKEEPER_CONNECT=zookeeper:2181
+      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
+      - ALLOW_PLAINTEXT_LISTENER=yes
+    depends_on:
+      - zookeeper
     ports:
-      - "9000:9000"   # S3-compatible API
-      - "9001:9001"   # Web console
-    volumes:
-      - minio_data:/data
+      - "9092:9092"
     networks:
       - socialnet
 
   #################################################################
-  #                   CORE MICROSERVICES                         #
+  #                        CORE SERVICES                          #
   #################################################################
-  user-service:
-    container_name: user-service
-    build: ./user-service  
+  users-service:
+    container_name: users-service
+    build: ./users-service
     environment:
-      DB_HOST: user-db
+      DB_HOST: users-db
       DB_USER: user
       DB_PASSWORD: userpass
-      DB_NAME: user_db
+      DB_NAME: users_db
     depends_on:
-      - user-db
+      - users-db
     networks:
       - socialnet
     ports:
@@ -156,12 +130,11 @@ services:
       DB_USER: post
       DB_PASSWORD: postpass
       DB_NAME: post_db
-      MEDIA_SERVICE_URL: http://minio:9000
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      MEDIA_SERVICE_URL: http://media-service:8084
+      KAFKA_BROKER_URL: kafka:9092
     depends_on:
       - post-db
       - kafka
-      - minio
     networks:
       - socialnet
     ports:
@@ -176,7 +149,7 @@ services:
       DB_PASSWORD: feedpass
       DB_NAME: feed_db
       REDIS_HOST: redis
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_BROKER_URL: kafka:9092
     depends_on:
       - feed-db
       - redis
@@ -185,86 +158,6 @@ services:
       - socialnet
     ports:
       - "8083:8083"
-
-  feedback-service:
-    container_name: feedback-service
-    build: ./feedback-service
-    environment:
-      DB_HOST: feedback-db
-      DB_USER: feedback
-      DB_PASSWORD: feedbackpass
-      DB_NAME: feedback_db
-      REDIS_HOST: redis
-    depends_on:
-      - feedback-db
-      - redis
-    networks:
-      - socialnet
-    ports:
-      - "8084:8084"
-
-  chat-service:
-    container_name: chat-service
-    build: ./chat-service
-    environment:
-      DB_HOST: chat-db
-      DB_USER: chat
-      DB_PASSWORD: chatpass
-      DB_NAME: chat_db
-      REDIS_HOST: redis
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-    depends_on:
-      - chat-db
-      - redis
-      - kafka
-    networks:
-      - socialnet
-    ports:
-      - "8085:8085"
-
-  notification-service:
-    container_name: notification-service
-    build: ./notification-service
-    environment:
-      DB_HOST: notification-db
-      DB_USER: notify
-      DB_PASSWORD: notifypass
-      DB_NAME: notification_db
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-    depends_on:
-      - notification-db
-      - kafka
-    networks:
-      - socialnet
-    ports:
-      - "8086:8086"
-
-  search-service:
-    container_name: search-service
-    build: ./search-service
-    environment:
-      ES_HOST: elasticsearch
-    depends_on:
-      - kafka
-    networks:
-      - socialnet
-    ports:
-      - "8087:8087"
-
-  friend-service:
-    container_name: friend-service
-    build: ./friend-service
-    environment:
-      DB_HOST: user-db
-      DB_USER: user
-      DB_PASSWORD: userpass
-      DB_NAME: user_db
-    depends_on:
-      - user-db
-    networks:
-      - socialnet
-    ports:
-      - "8088:8088"
 
   media-service:
     container_name: media-service
@@ -278,82 +171,69 @@ services:
     networks:
       - socialnet
     ports:
-      - "8089:8089"
+      - "8084:8084"
 
-  #################################################################
-  #                   API GATEWAY / LOAD BALANCER
-  #################################################################
-  loadbalancer:
-    image: nginx:latest
-    container_name: loadbalancer
+  feedback-service:
+    container_name: feedback-service
+    build: ./feedback-service
+    environment:
+      REDIS_HOST: redis
     depends_on:
-      - api-gateway
-    volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
-    ports:
-      - "80:80"
+      - redis
     networks:
       - socialnet
+    ports:
+      - "8085:8085"
 
+  message-service:
+    container_name: message-service
+    build: ./message-service
+    environment:
+      DB_HOST: message-db
+      DB_USER: message
+      DB_PASSWORD: messagepass
+      DB_NAME: message_db
+      REDIS_HOST: redis
+    depends_on:
+      - message-db
+      - redis
+    networks:
+      - socialnet
+    ports:
+      - "8086:8086"
+
+  #################################################################
+  #                         API GATEWAY                           #
+  #################################################################
   api-gateway:
     container_name: api-gateway
     build: ./api-gateway
     environment:
-      USER_SERVICE_URL: http://user-service:8081
+      USERS_SERVICE_URL: http://users-service:8081
       POST_SERVICE_URL: http://post-service:8082
       FEED_SERVICE_URL: http://feed-service:8083
-      FEEDBACK_SERVICE_URL: http://feedback-service:8084
-      CHAT_SERVICE_URL: http://chat-service:8085
-      NOTIFICATION_SERVICE_URL: http://notification-service:8086
-      SEARCH_SERVICE_URL: http://search-service:8087
-      FRIEND_SERVICE_URL: http://friend-service:8088
-      MEDIA_SERVICE_URL: http://media-service:8089
+      MEDIA_SERVICE_URL: http://media-service:8084
+      FEEDBACK_SERVICE_URL: http://feedback-service:8085
+      MESSAGE_SERVICE_URL: http://message-service:8086
     depends_on:
-      - user-service
+      - users-service
       - post-service
       - feed-service
-      - feedback-service
-      - chat-service
-      - notification-service
-      - search-service
-      - friend-service
       - media-service
+      - feedback-service
+      - message-service
     networks:
       - socialnet
     ports:
       - "8080:8080"
 
-  #################################################################
-  #                    SWAGGER UI FOR DOCS
-  #################################################################
-  swagger-ui:
-    image: swaggerapi/swagger-ui:latest
-    container_name: swagger-ui
-    depends_on:
-      - api-gateway
-    ports:
-      - "9002:8080"
-    environment:
-      SWAGGER_JSON: /openapi/combined_openapi.yaml
-    volumes:
-      - ./combined_openapi.yaml:/openapi/combined_openapi.yaml:ro
-    networks:
-      - socialnet
+volumes:
+  users_db_data:
+  post_db_data:
+  feed_db_data:
+  message_db_data:
+  redis_data:
+  minio_data:
 
 networks:
   socialnet:
-
-volumes:
-  # Postgres
-  user_db_data:
-  post_db_data:
-  feed_db_data:
-  feedback_db_data:
-  chat_db_data:
-  notification_db_data:
-
-  # Redis
-  redis_data:
-
-  # MinIO
-  minio_data:
