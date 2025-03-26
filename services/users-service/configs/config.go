@@ -12,17 +12,11 @@ type Config struct {
 	DBUser  string
 	DBPass  string
 	DBName  string
+	Auth    AuthConfig
 }
 
-func LoadConfig() *Config {
-	return &Config{
-		AppPort: getEnv("USER_APP_PORT", ":8081"),
-		DBHost:  getEnv("USER_DB_HOST", "localhost"),
-		DBPort:  getEnv("USER_DB_PORT", "5432"),
-		DBUser:  getEnv("USER_DB_USER", "postgres"),
-		DBPass:  getEnv("USER_DB_PASS", "postgres"),
-		DBName:  getEnv("USER_DB_NAME", "user_db"),
-	}
+type AuthConfig struct {
+	Secret string
 }
 
 func getEnv(key, fallback string) string {
@@ -36,4 +30,18 @@ func (c *Config) DSN() string {
 	return fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
 		c.DBHost, c.DBPort, c.DBUser, c.DBPass, c.DBName,
 	)
+}
+
+func LoadConfig() *Config {
+	return &Config{
+		AppPort: getEnv("USER_APP_PORT", ":8081"),
+		DBHost:  getEnv("USER_DB_HOST", "localhost"),
+		DBPort:  getEnv("USER_DB_PORT", "5432"),
+		DBUser:  getEnv("USER_DB_USER", "postgres"),
+		DBPass:  getEnv("USER_DB_PASS", "postgres"),
+		DBName:  getEnv("USER_DB_NAME", "user_db"),
+		Auth: AuthConfig{
+			Secret: getEnv("JWT_SECRET", "test"),
+		},
+	}
 }

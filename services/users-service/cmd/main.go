@@ -2,35 +2,48 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"net/http"
 
 	"users-service/configs"
+	"users-service/internal/auth"
 	"users-service/internal/user"
 	"users-service/pkg/db"
+	"users-service/pkg/middleware"
 )
 
-func main() {
+func App() http.Handler {
 	cfg := configs.LoadConfig()
-
 	database := db.NewDb(cfg)
 	database.DB.AutoMigrate(&user.User{})
 
-	repo := user.NewUserRepository(database.DB)
-	svc := user.NewUserService(repo)
+	router := http.NewServeMux()
 
-	handler := user.NewUserHandler(svc)
+	// repositories
+	userRepository := user.NewUserRepository(database)
 
-	mux := http.NewServeMux()
-	user.RegisterRoutes(mux, handler)
+	// services
+	authService := auth.NewAuthService(userRepository)
 
-	srv := &http.Server{
-		Addr:    cfg.AppPort,
-		Handler: mux,
+	// handlers
+	auth.NewAuthHandler(router, auth.AuthHandlerDeps{
+		Config:      cfg,
+		AuthService: authService,
+	})
+
+	// middlewares
+	stack := middleware.Chain(
+		middleware.CORS,
+		middleware.Logging,
+	)
+	return stack(router)
+}
+
+func main() {
+	app := App()
+	server := http.Server{
+		Addr:    ":8081",
+		Handler: app,
 	}
-
-	fmt.Printf("User Service listening on %s\n", cfg.AppPort)
-	if err := srv.ListenAndServe(); err != nil {
-		log.Fatalf("Server failed: %v\n", err)
-	}
+	fmt.Println("User Service listening on port 8081")
+	server.ListenAndServe()
 }

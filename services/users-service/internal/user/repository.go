@@ -1,51 +1,28 @@
 package user
 
-import (
-	"gorm.io/gorm"
-)
-
-type IUserRepository interface {
-	Create(u *User) (*User, error)
-	FindByEmail(email string) (*User, error)
-	FindAll() ([]User, error)
-	FindByID(id uint) (*User, error)
-}
+import "users-service/pkg/db"
 
 type UserRepository struct {
-	DB *gorm.DB
+	database *db.Db
 }
 
-func NewUserRepository(db *gorm.DB) IUserRepository {
-	return &UserRepository{DB: db}
+func NewUserRepository(database *db.Db) *UserRepository {
+	return &UserRepository{database: database}
 }
 
-func (repo *UserRepository) Create(u *User) (*User, error) {
-	if err := repo.DB.Create(u).Error; err != nil {
-		return nil, err
+func (repo *UserRepository) Create(user *User) (*User, error) {
+	result := repo.database.DB.Create(user)
+	if result.Error != nil {
+		return nil, result.Error
 	}
-	return u, nil
+	return user, nil
 }
 
 func (repo *UserRepository) FindByEmail(email string) (*User, error) {
 	var user User
-	if err := repo.DB.Where("email = ?", email).First(&user).Error; err != nil {
-		return nil, err
-	}
-	return &user, nil
-}
-
-func (repo *UserRepository) FindAll() ([]User, error) {
-	var users []User
-	if err := repo.DB.Find(&users).Error; err != nil {
-		return nil, err
-	}
-	return users, nil
-}
-
-func (repo *UserRepository) FindByID(id uint) (*User, error) {
-	var user User
-	if err := repo.DB.First(&user, id).Error; err != nil {
-		return nil, err
+	result := repo.database.DB.First(&user, "email = ?", email)
+	if result.Error != nil {
+		return nil, result.Error
 	}
 	return &user, nil
 }
