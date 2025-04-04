@@ -1,90 +1,75 @@
 package media
 
 import (
+	"context"
 	"encoding/json"
-	"fmt"
+	"log"
 	"net/http"
-	"os"
-	"path/filepath"
-	"strconv"
 	"strings"
 )
 
-type MediaHandler struct {
-	Service    IMediaService
-	StorageDir string
+type Handler struct {
+	service MediaService
 }
 
-func NewMediaHandler(svc IMediaService, storageDir string) *MediaHandler {
-	return &MediaHandler{
-		Service:    svc,
-		StorageDir: storageDir,
+func NewHandler(service MediaService) *Handler {
+	return &Handler{
+		service: service,
 	}
 }
 
-func RegisterRoutes(mux *http.ServeMux, handler *MediaHandler) {
-	mux.HandleFunc("/media", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost {
-			handler.UploadFile(w, r)
-			return
-		}
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-	})
-
-	mux.HandleFunc("/media/", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-		if len(pathParts) < 2 {
-			http.Error(w, "Missing media ID", http.StatusBadRequest)
-			return
-		}
-		handler.GetFile(w, r, pathParts[1])
-	})
+func (h *Handler) InitRoutes() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", h.healthCheck)
+	mux.HandleFunc("/media/upload", h.uploadFile)
+	return mux
 }
 
-func (h *MediaHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
-	file, header, err := r.FormFile("file")
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	defer file.Close()
-
-	media, err := h.Service.Upload(file, header)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(media)
+func (h *Handler) healthCheck(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("OK"))
 }
 
-func (h *MediaHandler) GetFile(w http.ResponseWriter, r *http.Request, idStr string) {
-	id, err := strconv.Atoi(idStr)
-	if err != nil {
-		http.Error(w, "invalid media ID", http.StatusBadRequest)
+func (h *Handler) uploadFile(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "Method not allowed"})
 		return
 	}
-	media, err := h.Service.Get(uint(id))
-	if err != nil {
-		http.Error(w, "media not found", http.StatusNotFound)
-		return
-	}
-	filePath := filepath.Join(h.StorageDir, media.FileName)
-	f, err := os.Open(filePath)
-	if err != nil {
-		http.Error(w, "file not found", http.StatusNotFound)
-		return
-	}
-	defer f.Close()
 
-	w.Header().Set("Content-Type", media.ContentType)
-	w.Header().Set(
-		"Content-Disposition",
-		fmt.Sprintf("attachment; filename=%s", media.FileName),
-	)
-	http.ServeFile(w, r, filePath)
+	err := r.ParseMultipartForm(10 << 20) // limit memory usage
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "Failed to parse multipart form"})
+		return
+	}
+
+	file, fileHeader, err := r.FormFile("file")
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "Failed to get file from form"})
+		return
+	}
+
+	ctx := context.Background()
+	mediaFile, err := h.service.Upload(ctx, file, fileHeader)
+	if err != nil {
+		log.Printf("Upload error: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "Upload failed"})
+		return
+	}
+
+	response := UploadResponse{
+		Message:  "File uploaded successfully",
+		FileName: mediaFile.FileName,
+		URL:      mediaFile.URL,
+	}
+
+	if strings.TrimSpace(response.URL) == "" {
+		response.URL = "No URL generated"
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
 }

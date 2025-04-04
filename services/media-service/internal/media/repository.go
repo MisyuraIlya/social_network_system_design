@@ -1,31 +1,39 @@
 package media
 
-import "gorm.io/gorm"
+import (
+	"context"
+	"io"
 
-type IMediaRepository interface {
-	Create(m *Media) (*Media, error)
-	FindByID(id uint) (*Media, error)
+	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
+)
+
+type MediaRepository interface {
+	UploadFile(ctx context.Context, bucketName, objectName string, reader io.Reader, objectSize int64, contentType string) (string, error)
 }
 
-type MediaRepository struct {
-	DB *gorm.DB
+type S3Repository struct {
+	client *minio.Client
 }
 
-func NewMediaRepository(db *gorm.DB) IMediaRepository {
-	return &MediaRepository{DB: db}
-}
-
-func (repo *MediaRepository) Create(m *Media) (*Media, error) {
-	if err := repo.DB.Create(m).Error; err != nil {
+func NewS3Repository(endpoint, accessKey, secretKey string) (*S3Repository, error) {
+	client, err := minio.New(endpoint, &minio.Options{
+		Creds:  credentials.NewStaticV4(accessKey, secretKey, ""),
+		Secure: false, // set true if using https
+	})
+	if err != nil {
 		return nil, err
 	}
-	return m, nil
+	return &S3Repository{client: client}, nil
 }
 
-func (repo *MediaRepository) FindByID(id uint) (*Media, error) {
-	var media Media
-	if err := repo.DB.First(&media, id).Error; err != nil {
-		return nil, err
+func (r *S3Repository) UploadFile(ctx context.Context, bucketName, objectName string, reader io.Reader, objectSize int64, contentType string) (string, error) {
+	_, err := r.client.PutObject(ctx, bucketName, objectName, reader, objectSize, minio.PutObjectOptions{
+		ContentType: contentType,
+	})
+	if err != nil {
+		return "", err
 	}
-	return &media, nil
+
+	return objectName, nil
 }

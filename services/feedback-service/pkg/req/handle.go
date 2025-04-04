@@ -1,7 +1,7 @@
 package req
 
 import (
-	"feedback-gateway/pkg/res"
+	"feedback-service/pkg/res"
 	"net/http"
 )
 

@@ -1,57 +1,31 @@
 package feedback
 
-import "gorm.io/gorm"
+import (
+	"context"
 
-type IFeedbackRepository interface {
-	CreateLike(like *Like) (*Like, error)
-	DeleteLike(userID, postID uint) error
-	CountLikes(postID uint) (int64, error)
+	"github.com/go-redis/redis/v8"
+	"gorm.io/gorm"
+)
 
-	CreateComment(comment *Comment) (*Comment, error)
-	DeleteComment(commentID uint) error
-	FindCommentsByPost(postID uint) ([]Comment, error)
+type Repository struct {
+	db    *gorm.DB
+	redis *redis.Client
 }
 
-type FeedbackRepository struct {
-	DB *gorm.DB
+func NewRepository(db *gorm.DB, redis *redis.Client) *Repository {
+	return &Repository{db: db, redis: redis}
 }
 
-func NewFeedbackRepository(db *gorm.DB) IFeedbackRepository {
-	return &FeedbackRepository{DB: db}
-}
-
-func (repo *FeedbackRepository) CreateLike(like *Like) (*Like, error) {
-	if err := repo.DB.Create(like).Error; err != nil {
-		return nil, err
+func (r *Repository) SaveLike(like Like) error {
+	if err := r.db.Create(&like).Error; err != nil {
+		return err
 	}
-	return like, nil
+	return r.redis.Incr(context.Background(), "likes:"+like.PostID).Err()
 }
 
-func (repo *FeedbackRepository) DeleteLike(userID, postID uint) error {
-	return repo.DB.Where("user_id = ? AND post_id = ?", userID, postID).Delete(&Like{}).Error
-}
-
-func (repo *FeedbackRepository) CountLikes(postID uint) (int64, error) {
-	var count int64
-	err := repo.DB.Model(&Like{}).Where("post_id = ?", postID).Count(&count).Error
-	return count, err
-}
-
-func (repo *FeedbackRepository) CreateComment(comment *Comment) (*Comment, error) {
-	if err := repo.DB.Create(comment).Error; err != nil {
-		return nil, err
+func (r *Repository) SaveComment(comment Comment) error {
+	if err := r.db.Create(&comment).Error; err != nil {
+		return err
 	}
-	return comment, nil
-}
-
-func (repo *FeedbackRepository) DeleteComment(commentID uint) error {
-	return repo.DB.Delete(&Comment{}, commentID).Error
-}
-
-func (repo *FeedbackRepository) FindCommentsByPost(postID uint) ([]Comment, error) {
-	var comments []Comment
-	if err := repo.DB.Where("post_id = ?", postID).Order("id asc").Find(&comments).Error; err != nil {
-		return nil, err
-	}
-	return comments, nil
+	return r.redis.Incr(context.Background(), "comments:"+comment.PostID).Err()
 }

@@ -1,9 +1,8 @@
 package db
 
 import (
+	"feedback-service/configs"
 	"log"
-
-	"feedback-gateway/configs"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"

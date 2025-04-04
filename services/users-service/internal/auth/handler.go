@@ -3,6 +3,7 @@ package auth
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"users-service/configs"
 	"users-service/pkg/jwt"
 	"users-service/pkg/req"
@@ -26,6 +27,7 @@ func NewAuthHandler(router *http.ServeMux, deps AuthHandlerDeps) {
 	}
 	router.HandleFunc("/auth/login", handler.Login())
 	router.HandleFunc("/auth/register", handler.Register())
+	router.HandleFunc("/auth/validate", handler.Validate())
 }
 
 func (handler *AuthHandler) Login() http.HandlerFunc {
@@ -76,5 +78,26 @@ func (handler *AuthHandler) Register() http.HandlerFunc {
 			Token: token,
 		}
 		res.Json(w, data, 201)
+	}
+}
+
+func (handler *AuthHandler) Validate() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		authHeader := r.Header.Get("Authorization")
+		if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
+			http.Error(w, "missing or malformed token", http.StatusUnauthorized)
+			return
+		}
+
+		token := strings.TrimPrefix(authHeader, "Bearer ")
+		valid, data := jwt.NewJWT(handler.Config.Auth.Secret).Parse(token)
+		if !valid || data == nil {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		res.Json(w, map[string]string{
+			"email": data.Email,
+		}, http.StatusOK)
 	}
 }

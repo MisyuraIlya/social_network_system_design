@@ -2,7 +2,6 @@ package db
 
 import (
 	"log"
-
 	"post-service/configs"
 
 	"gorm.io/driver/postgres"

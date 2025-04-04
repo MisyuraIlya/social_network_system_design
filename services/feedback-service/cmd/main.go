@@ -1,34 +1,34 @@
 package main
 
 import (
-	"fmt"
+	"feedback-service/configs"
+	"feedback-service/internal/feedback"
+	"feedback-service/pkg/cache"
+	"feedback-service/pkg/db"
 	"log"
 	"net/http"
-
-	"feedback-gateway/configs"
-	"feedback-gateway/internal/feedback"
-	"feedback-gateway/pkg/db"
 )
 
 func main() {
 	cfg := configs.LoadConfig()
-	database := db.NewDb(cfg)
+	dbInstance := db.NewDb(cfg)
 
-	database.DB.AutoMigrate(&feedback.Like{}, &feedback.Comment{})
-
-	repo := feedback.NewFeedbackRepository(database.DB)
-	svc := feedback.NewFeedbackService(repo)
-	handler := feedback.NewFeedbackHandler(svc)
-
-	mux := http.NewServeMux()
-	feedback.RegisterRoutes(mux, handler)
-
-	srv := &http.Server{
-		Addr:    cfg.AppPort,
-		Handler: mux,
+	// 👇 Auto-create tables from models
+	if err := dbInstance.DB.AutoMigrate(&feedback.Like{}, &feedback.Comment{}); err != nil {
+		log.Fatalf("Failed to migrate DB: %v", err)
 	}
-	fmt.Printf("Feedback Service listening on %s\n", cfg.AppPort)
-	if err := srv.ListenAndServe(); err != nil {
-		log.Fatalf("Server failed: %v\n", err)
-	}
+
+	rdb := cache.NewRedis(cfg)
+
+	router := http.NewServeMux()
+	repo := feedback.NewRepository(dbInstance.DB, rdb)
+	service := feedback.NewService(repo)
+
+	feedback.NewHandler(router, feedback.HandlerDeps{
+		Config:  cfg,
+		Service: service,
+	})
+
+	log.Printf("Feedback service running on %s\n", cfg.AppPort)
+	log.Fatal(http.ListenAndServe(cfg.AppPort, router))
 }

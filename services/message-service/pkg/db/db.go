@@ -2,7 +2,6 @@ package db
 
 import (
 	"log"
-
 	"message-service/configs"
 
 	"gorm.io/driver/postgres"
@@ -16,7 +15,7 @@ type Db struct {
 func NewDb(cfg *configs.Config) *Db {
 	db, err := gorm.Open(postgres.Open(cfg.DSN()), &gorm.Config{})
 	if err != nil {
-		log.Fatalf("Failed to connect to DB: %v", err)
+		log.Fatalf("Could not connect to Postgres: %v", err)
 	}
 	return &Db{DB: db}
 }

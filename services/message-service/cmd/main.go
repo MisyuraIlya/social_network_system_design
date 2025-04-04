@@ -1,34 +1,44 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"net/http"
+	"strings"
 
 	"message-service/configs"
 	"message-service/internal/message"
 	"message-service/pkg/db"
+	kafkapkg "message-service/pkg/kafka"
+	redispkg "message-service/pkg/redis"
 )
 
 func main() {
 	cfg := configs.LoadConfig()
-	database := db.NewDb(cfg)
 
-	database.DB.AutoMigrate(&message.Message{})
+	pg := db.NewDb(cfg)
+	repo := message.NewRepository(pg.DB)
+	service := message.NewService(repo)
 
-	repo := message.NewMessageRepository(database.DB)
-	svc := message.NewMessageService(repo)
-	handler := message.NewMessageHandler(svc)
+	// Redis client
+	rds := redispkg.NewRedisClient(cfg.RedisHost, cfg.RedisPort)
 
-	mux := http.NewServeMux()
-	message.RegisterRoutes(mux, handler)
+	// Kafka producer
+	kafkaProducer := kafkapkg.NewProducer(strings.Split(cfg.KafkaBrokers, ","), cfg.KafkaTopic)
+	redisAdapter := message.NewRedisAdapter(rds)
 
-	srv := &http.Server{
-		Addr:    cfg.AppPort,
-		Handler: mux,
-	}
-	fmt.Printf("Message Service listening on %s\n", cfg.AppPort)
-	if err := srv.ListenAndServe(); err != nil {
-		log.Fatalf("Server failed: %v\n", err)
-	}
+	// Init dependencies
+	cache := message.NewCache(redisAdapter)
+	publisher := message.NewPublisher(kafkaProducer)
+
+	// Router setup
+	router := http.NewServeMux()
+	message.NewHandler(router, message.HandlerDeps{
+		Config:    cfg,
+		Service:   service,
+		Cache:     cache,
+		Publisher: publisher,
+	})
+
+	log.Println("Message service running on", cfg.AppPort)
+	log.Fatal(http.ListenAndServe(cfg.AppPort, router))
 }

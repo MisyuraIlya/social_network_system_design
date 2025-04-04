@@ -6,37 +6,34 @@ import (
 )
 
 type Config struct {
-	AppPort    string
-	DBHost     string
-	DBPort     string
-	DBUser     string
-	DBPass     string
-	DBName     string
-	StorageDir string
+	AppPort      string
+	S3Endpoint   string
+	S3AccessKey  string
+	S3SecretKey  string
+	S3BucketName string
 }
 
-func LoadConfig() *Config {
-	return &Config{
-		AppPort:    getEnv("MEDIA_APP_PORT", ":8084"),
-		DBHost:     getEnv("MEDIA_DB_HOST", "localhost"),
-		DBPort:     getEnv("MEDIA_DB_PORT", "5432"),
-		DBUser:     getEnv("MEDIA_DB_USER", "postgres"),
-		DBPass:     getEnv("MEDIA_DB_PASS", "postgres"),
-		DBName:     getEnv("MEDIA_DB_NAME", "media_db"),
-		StorageDir: getEnv("MEDIA_STORAGE_DIR", "./uploads"),
+func LoadConfig() (*Config, error) {
+	// Replace defaults as needed:
+	cfg := &Config{
+		AppPort:      getEnv("MEDIA_APP_PORT", ":8084"),
+		S3Endpoint:   getEnv("S3_ENDPOINT", "http://localhost:9000"),
+		S3AccessKey:  getEnv("S3_ACCESS_KEY", "minio"),
+		S3SecretKey:  getEnv("S3_SECRET_KEY", "minio123"),
+		S3BucketName: getEnv("S3_BUCKET_NAME", "media-bucket"),
 	}
-}
-
-func (c *Config) DSN() string {
-	return fmt.Sprintf(
-		"host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
-		c.DBHost, c.DBPort, c.DBUser, c.DBPass, c.DBName,
-	)
+	return cfg, nil
 }
 
 func getEnv(key, fallback string) string {
-	if val := os.Getenv(key); val != "" {
-		return val
+	val := os.Getenv(key)
+	if val == "" {
+		return fallback
 	}
-	return fallback
+	return val
+}
+
+func (c *Config) String() string {
+	return fmt.Sprintf("AppPort=%s, S3Endpoint=%s, S3AccessKey=%s, S3BucketName=%s",
+		c.AppPort, c.S3Endpoint, c.S3AccessKey, c.S3BucketName)
 }

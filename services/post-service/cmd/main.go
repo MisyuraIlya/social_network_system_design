@@ -2,33 +2,62 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"net/http"
-
 	"post-service/configs"
-	"post-service/internal/post"
-	"post-service/pkg/db"
+	"post-service/internal/comments"
+	"post-service/internal/likes"
+	"post-service/internal/posts"
+	"post-service/internal/tags"
+	"post-service/pkg/di"
 )
 
-func main() {
+func App() http.Handler {
 	cfg := configs.LoadConfig()
-	database := db.NewDb(cfg)
+	container := di.BuildContainer(cfg)
 
-	database.DB.AutoMigrate(&post.Post{})
+	container.DB.AutoMigrate(
+		&posts.Post{},
+		&comments.Comment{},
+		&likes.Like{},
+		&tags.Tag{},
+		&tags.PostTag{},
+	)
 
-	repo := post.NewPostRepository(database.DB)
-	svc := post.NewPostService(repo)
-	handler := post.NewPostHandler(svc)
+	router := http.NewServeMux()
 
-	mux := http.NewServeMux()
-	post.RegisterRoutes(mux, handler)
+	// Register post routes
+	posts.NewHandler(router, posts.HandlerDeps{
+		Config:  cfg,
+		Service: container.PostService,
+	})
 
-	srv := &http.Server{
-		Addr:    cfg.AppPort,
-		Handler: mux,
+	// Register comments
+	comments.NewHandler(router, comments.HandlerDeps{
+		Config:  cfg,
+		Service: container.CommentService,
+	})
+
+	// Register likes
+	likes.NewHandler(router, likes.HandlerDeps{
+		Config:  cfg,
+		Service: container.LikeService,
+	})
+
+	// Register tags
+	tags.NewHandler(router, tags.HandlerDeps{
+		Config:  cfg,
+		Service: container.TagService,
+	})
+
+	return router
+}
+
+func main() {
+	app := App()
+	server := http.Server{
+		Addr:    ":8082",
+		Handler: app,
 	}
-	fmt.Printf("Post Service listening on %s\n", cfg.AppPort)
-	if err := srv.ListenAndServe(); err != nil {
-		log.Fatalf("Server failed: %v\n", err)
-	}
+	fmt.Println("Post Service listening on port 8082")
+	server.ListenAndServe()
 }

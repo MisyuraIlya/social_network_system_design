@@ -1,25 +1,11 @@
 package feed
 
-import "time"
-
-type AddToFeedRequest struct {
-	UserID uint `json:"userId"`
-	PostID uint `json:"postId"`
+type CreateFeedRequest struct {
+	UserID  string `json:"user_id"`
+	PostID  string `json:"post_id"`
+	Content string `json:"content"`
 }
 
-type AddToFeedResponse struct {
-	ID     uint `json:"id"`
-	UserID uint `json:"userId"`
-	PostID uint `json:"postId"`
-}
-
-type FeedItemData struct {
-	ID        uint      `json:"id"`
-	UserID    uint      `json:"userId"`
-	PostID    uint      `json:"postId"`
-	CreatedAt time.Time `json:"createdAt"`
-}
-
-type GetFeedResponse struct {
-	Items []FeedItemData `json:"items"`
+type CreateFeedResponse struct {
+	Message string `json:"message"`
 }

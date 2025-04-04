@@ -16,7 +16,7 @@ type Config struct {
 
 func LoadConfig() *Config {
 	return &Config{
-		AppPort: getEnv("POST_APP_PORT", ":8082"),
+		AppPort: getEnv("POST_APP_PORT", ":8080"),
 		DBHost:  getEnv("POST_DB_HOST", "localhost"),
 		DBPort:  getEnv("POST_DB_PORT", "5432"),
 		DBUser:  getEnv("POST_DB_USER", "postgres"),
@@ -25,6 +25,7 @@ func LoadConfig() *Config {
 	}
 }
 
+// DSN builds the connection string for Postgres
 func (c *Config) DSN() string {
 	return fmt.Sprintf(
 		"host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",

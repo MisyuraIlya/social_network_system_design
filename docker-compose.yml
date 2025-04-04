@@ -16,7 +16,7 @@ services:
     networks:
       - socialnet
     ports:
-      - "54433:5432" # For PgAdmin
+      - "54433:5432"
 
   post-db:
     image: postgres:15
@@ -30,21 +30,7 @@ services:
     networks:
       - socialnet
     ports:
-      - "5444:5432" # For PgAdmin
-
-  feed-db:
-    image: postgres:15
-    container_name: feed-db
-    environment:
-      POSTGRES_USER: feed
-      POSTGRES_PASSWORD: feedpass
-      POSTGRES_DB: feed_db
-    volumes:
-      - feed_db_data:/var/lib/postgresql/data
-    networks:
-      - socialnet
-    ports:
-      - "5445:5432" # For PgAdmin
+      - "5444:5432"
 
   message-db:
     image: postgres:15
@@ -58,7 +44,21 @@ services:
     networks:
       - socialnet
     ports:
-      - "54436:5432" # For PgAdmin
+      - "54436:5432"
+
+  feedback-db:
+    image: postgres:15
+    container_name: feedback-db
+    environment:
+      POSTGRES_USER: feedback
+      POSTGRES_PASSWORD: feedbackpass
+      POSTGRES_DB: feedback_db
+    volumes:
+      - feedback_db_data:/var/lib/postgresql/data
+    networks:
+      - socialnet
+    ports:
+      - "5446:5432"
 
   #################################################################
   #                       CACHE / S3 / QUEUE                      #
@@ -140,10 +140,11 @@ services:
       - "8081:8081"
     command: ["air"]
 
-
   post-service:
     container_name: post-service
-    build: ./services/post-service
+    build:
+      context: ./services/post-service
+      dockerfile: Dockerfile.dev
     environment:
       POST_DB_HOST: post-db
       POST_DB_PORT: 5432
@@ -163,18 +164,18 @@ services:
 
   feed-service:
     container_name: feed-service
-    build: ./services/feed-service
+    build: 
+      context: ./services/feed-service
+      dockerfile: Dockerfile.dev
     environment:
-      FEED_DB_HOST: feed-db
-      FEED_DB_PORT: 5432
-      FEED_DB_USER: feed
-      FEED_DB_PASS: feedpass
-      FEED_DB_NAME: feed_db
       FEED_APP_PORT: ":8083"
-      REDIS_HOST: redis
-      KAFKA_BROKER_URL: kafka:9092
+      FEED_REDIS_HOST: redis
+      FEED_REDIS_PORT: 6379
+      FEED_KAFKA_BROKERS: kafka:9092
+      FEED_KAFKA_TOPIC: posts
+      FEED_KAFKA_GROUP_ID: feed-service-group
+      USER_SERVICE_URL: http://users-service:8081
     depends_on:
-      - feed-db
       - redis
       - kafka
     networks:
@@ -184,35 +185,51 @@ services:
 
   media-service:
     container_name: media-service
-    build: ./services/media-service
+    build:
+      context: ./services/media-service
+      dockerfile: Dockerfile.dev
     environment:
       MEDIA_APP_PORT: ":8084"
-      S3_ENDPOINT: http://minio:9000
-      S3_ACCESS_KEY: minio
-      S3_SECRET_KEY: minio123
+      S3_ENDPOINT: "minio:9000"
+      S3_ACCESS_KEY: "minio"
+      S3_SECRET_KEY: "minio123"
+      S3_BUCKET_NAME: "media-bucket"
     depends_on:
       - minio
     networks:
       - socialnet
     ports:
       - "8084:8084"
+    command: ["air"]
 
   feedback-service:
     container_name: feedback-service
-    build: ./services/feedback-service
+    build: 
+      context: ./services/feedback-service
+      dockerfile: Dockerfile.dev
     environment:
       FEEDBACK_APP_PORT: ":8085"
+      FEEDBACK_DB_HOST: feedback-db
+      FEEDBACK_DB_PORT: 5432
+      FEEDBACK_DB_USER: feedback
+      FEEDBACK_DB_PASS: feedbackpass
+      FEEDBACK_DB_NAME: feedback_db
       REDIS_HOST: redis
+      REDIS_PORT: 6379
     depends_on:
+      - feedback-db
       - redis
     networks:
       - socialnet
     ports:
       - "8085:8085"
+    command: ["air"]
 
   message-service:
     container_name: message-service
-    build: ./services/message-service
+    build: 
+      context: ./services/message-service
+      dockerfile: Dockerfile.dev
     environment:
       MESSAGE_DB_HOST: message-db
       MESSAGE_DB_PORT: 5432
@@ -220,7 +237,10 @@ services:
       MESSAGE_DB_PASS: messagepass
       MESSAGE_DB_NAME: message_db
       MESSAGE_APP_PORT: ":8086"
-      REDIS_HOST: redis
+      MESSAGE_REDIS_HOST: redis
+      MESSAGE_REDIS_PORT: 6379
+      MESSAGE_KAFKA_BROKERS: kafka:9092
+      MESSAGE_KAFKA_TOPIC: new-message
     depends_on:
       - message-db
       - redis
@@ -228,6 +248,7 @@ services:
       - socialnet
     ports:
       - "8086:8086"
+    command: ["air"]
 
   #################################################################
   #                         API GATEWAY                           #
@@ -237,7 +258,7 @@ services:
     container_name: api-gateway
     build: ./services/api-gateway
     environment:
-      API_GATEWAY_PORT: ":8080"
+      GATEWAY_APP_PORT: ":8080"
       USERS_SERVICE_URL: http://users-service:8081
       POST_SERVICE_URL: http://post-service:8082
       FEED_SERVICE_URL: http://feed-service:8083
@@ -256,13 +277,36 @@ services:
     ports:
       - "8080:8080"
 
+
+  #################################################################
+  #                         LOAD BALANCER                         #
+  #################################################################
+
+  nginx:
+    image: nginx:alpine
+    container_name: nginx-load-balancer
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "8090:80"
+    depends_on:
+      - api-gateway
+    networks:
+      - socialnet
+
+#################################################################
+#                          VOLUMES                              #
+#################################################################
 volumes:
   users_db_data:
   post_db_data:
-  feed_db_data:
   message_db_data:
+  feedback_db_data:  
   redis_data:
   minio_data:
 
+#################################################################
+#                          NETWORKS                             #
+#################################################################
 networks:
   socialnet:

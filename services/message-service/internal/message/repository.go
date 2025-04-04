@@ -2,32 +2,26 @@ package message
 
 import "gorm.io/gorm"
 
-type IMessageRepository interface {
-	Create(msg *Message) (*Message, error)
-	FindByDialogID(dialogID uint) ([]Message, error)
+type Repository interface {
+	Save(msg *Message) error
+	FindAll() ([]Message, error)
 }
 
-type MessageRepository struct {
-	DB *gorm.DB
+type repository struct {
+	db *gorm.DB
 }
 
-func NewMessageRepository(db *gorm.DB) IMessageRepository {
-	return &MessageRepository{DB: db}
+func NewRepository(db *gorm.DB) Repository {
+	db.AutoMigrate(&Message{})
+	return &repository{db: db}
 }
 
-func (repo *MessageRepository) Create(msg *Message) (*Message, error) {
-	if err := repo.DB.Create(msg).Error; err != nil {
-		return nil, err
-	}
-	return msg, nil
+func (r *repository) Save(msg *Message) error {
+	return r.db.Create(msg).Error
 }
 
-func (repo *MessageRepository) FindByDialogID(dialogID uint) ([]Message, error) {
+func (r *repository) FindAll() ([]Message, error) {
 	var messages []Message
-	if err := repo.DB.Where("dialog_id = ?", dialogID).
-		Order("created_at asc").
-		Find(&messages).Error; err != nil {
-		return nil, err
-	}
-	return messages, nil
+	err := r.db.Order("created_at desc").Find(&messages).Error
+	return messages, err
 }

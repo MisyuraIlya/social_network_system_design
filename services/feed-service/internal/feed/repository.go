@@ -1,32 +1,57 @@
 package feed
 
-import "gorm.io/gorm"
+import (
+	"encoding/json"
+	"fmt"
 
-type IFeedRepository interface {
-	Create(item *FeedItem) (*FeedItem, error)
-	FindByUser(userID uint) ([]FeedItem, error)
+	"github.com/gomodule/redigo/redis"
+)
+
+// Repository defines how we interact with our data store (Redis).
+type Repository interface {
+	SaveFeedItem(item FeedItem) error
+	GetFeedItemsByUserID(userID string) ([]FeedItem, error)
 }
 
-type FeedRepository struct {
-	DB *gorm.DB
+type redisRepository struct {
+	pool *redis.Pool
 }
 
-func NewFeedRepository(db *gorm.DB) IFeedRepository {
-	return &FeedRepository{DB: db}
+func NewRepository(pool *redis.Pool) Repository {
+	return &redisRepository{pool: pool}
 }
 
-func (repo *FeedRepository) Create(item *FeedItem) (*FeedItem, error) {
-	if err := repo.DB.Create(item).Error; err != nil {
+func (r *redisRepository) SaveFeedItem(item FeedItem) error {
+	conn := r.pool.Get()
+	defer conn.Close()
+
+	b, err := json.Marshal(item)
+	if err != nil {
+		return err
+	}
+
+	// For example: store feed items in a Redis List per user
+	key := fmt.Sprintf("feed:%s", item.UserID)
+	_, err = conn.Do("LPUSH", key, b)
+	return err
+}
+
+func (r *redisRepository) GetFeedItemsByUserID(userID string) ([]FeedItem, error) {
+	conn := r.pool.Get()
+	defer conn.Close()
+
+	key := fmt.Sprintf("feed:%s", userID)
+	values, err := redis.Values(conn.Do("LRANGE", key, 0, 50)) // get last 50 items
+	if err != nil {
 		return nil, err
 	}
-	return item, nil
-}
 
-func (repo *FeedRepository) FindByUser(userID uint) ([]FeedItem, error) {
-	var items []FeedItem
-	if err := repo.DB.Where("user_id = ?", userID).
-		Order("id desc").Find(&items).Error; err != nil {
-		return nil, err
+	var feedItems []FeedItem
+	for _, v := range values {
+		var item FeedItem
+		if err := json.Unmarshal(v.([]byte), &item); err == nil {
+			feedItems = append(feedItems, item)
+		}
 	}
-	return items, nil
+	return feedItems, nil
 }

@@ -2,87 +2,102 @@ package message
 
 import (
 	"encoding/json"
+	"fmt"
+	"message-service/configs"
+	"message-service/pkg/res"
 	"net/http"
-	"strconv"
 )
 
-type MessageHandler struct {
-	Service IMessageService
+type HandlerDeps struct {
+	*configs.Config
+	Service   Service
+	Cache     Cache
+	Publisher Publisher
 }
 
-func NewMessageHandler(svc IMessageService) *MessageHandler {
-	return &MessageHandler{Service: svc}
+type Handler struct {
+	*configs.Config
+	Service   Service
+	Cache     Cache
+	Publisher Publisher
 }
 
-func RegisterRoutes(mux *http.ServeMux, handler *MessageHandler) {
-	mux.HandleFunc("/messages", func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodPost:
-			handler.SendMessage(w, r)
-		case http.MethodGet:
-			handler.GetMessages(w, r)
-		default:
-			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+func NewHandler(router *http.ServeMux, deps HandlerDeps) {
+	h := &Handler{
+		Config:    deps.Config,
+		Service:   deps.Service,
+		Cache:     deps.Cache,
+		Publisher: deps.Publisher,
+	}
+	router.HandleFunc("/messages/create", h.CreateMessage())
+	router.HandleFunc("/messages/list", h.ListMessages())
+}
+
+func (h *Handler) CreateMessage() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
 		}
-	})
+
+		var body struct {
+			UserID  uint   `json:"user_id"`
+			ChatID  uint   `json:"chat_id"`
+			Content string `json:"content"`
+		}
+
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		msg, err := h.Service.CreateMessage(body.UserID, body.Content)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// ✅ Update Redis popular chat count
+		cacheKey := fmt.Sprintf("popular:chat:%d", body.ChatID)
+		err = h.Cache.SetPopularChat(cacheKey, "true")
+		if err != nil {
+			fmt.Println("Redis error:", err)
+		}
+
+		// ✅ Publish Kafka event for new message
+		event := struct {
+			MessageID uint   `json:"message_id"`
+			UserID    uint   `json:"user_id"`
+			ChatID    uint   `json:"chat_id"`
+			Content   string `json:"content"`
+		}{
+			MessageID: msg.ID,
+			UserID:    body.UserID,
+			ChatID:    body.ChatID,
+			Content:   body.Content,
+		}
+
+		eventBytes, _ := json.Marshal(event)
+		err = h.Publisher.PublishNewMessage(eventBytes)
+		if err != nil {
+			fmt.Println("Kafka publish error:", err)
+		}
+
+		res.Json(w, msg, http.StatusCreated)
+	}
 }
 
-func (h *MessageHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
-	var req SendMessageRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid JSON: "+err.Error(), http.StatusBadRequest)
-		return
+func (h *Handler) ListMessages() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		msgs, err := h.Service.ListMessages()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		res.Json(w, msgs, http.StatusOK)
 	}
-
-	msg, err := h.Service.SendMessage(req.DialogID, req.SenderID, req.Content)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	resp := SendMessageResponse{
-		ID:        msg.ID,
-		DialogID:  msg.DialogID,
-		SenderID:  msg.SenderID,
-		Content:   msg.Content,
-		CreatedAt: msg.CreatedAt,
-	}
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(resp)
-}
-
-func (h *MessageHandler) GetMessages(w http.ResponseWriter, r *http.Request) {
-	dialogIDStr := r.URL.Query().Get("dialogId")
-	if dialogIDStr == "" {
-		http.Error(w, "dialogId is required", http.StatusBadRequest)
-		return
-	}
-
-	dialogID, err := strconv.Atoi(dialogIDStr)
-	if err != nil || dialogID <= 0 {
-		http.Error(w, "invalid dialogId", http.StatusBadRequest)
-		return
-	}
-
-	messages, err := h.Service.GetMessages(uint(dialogID))
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	data := make([]MessageData, 0, len(messages))
-	for _, m := range messages {
-		data = append(data, MessageData{
-			ID:        m.ID,
-			DialogID:  m.DialogID,
-			SenderID:  m.SenderID,
-			Content:   m.Content,
-			CreatedAt: m.CreatedAt,
-			UpdatedAt: m.UpdatedAt,
-		})
-	}
-
-	resp := GetMessagesResponse{Messages: data}
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(resp)
 }

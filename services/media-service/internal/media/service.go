@@ -1,52 +1,47 @@
 package media
 
 import (
-	"io"
+	"context"
+	"fmt"
 	"mime/multipart"
-	"os"
-	"path/filepath"
 )
 
-type IMediaService interface {
-	Upload(file multipart.File, header *multipart.FileHeader) (*Media, error)
-	Get(id uint) (*Media, error)
+type MediaService interface {
+	Upload(ctx context.Context, file multipart.File, fileHeader *multipart.FileHeader) (*MediaFile, error)
 }
 
-type MediaService struct {
-	repo        IMediaRepository
-	storagePath string
+type mediaService struct {
+	repo       MediaRepository
+	bucketName string
 }
 
-func NewMediaService(r IMediaRepository, storagePath string) IMediaService {
-	return &MediaService{
-		repo:        r,
-		storagePath: storagePath,
+func NewMediaService(repo MediaRepository, bucketName string) MediaService {
+	return &mediaService{
+		repo:       repo,
+		bucketName: bucketName,
 	}
 }
 
-func (s *MediaService) Upload(file multipart.File, header *multipart.FileHeader) (*Media, error) {
-	filename := header.Filename
-	outPath := filepath.Join(s.storagePath, filename)
+func (m *mediaService) Upload(ctx context.Context, file multipart.File, fileHeader *multipart.FileHeader) (*MediaFile, error) {
+	defer file.Close()
 
-	outFile, err := os.Create(outPath)
-	if err != nil {
-		return nil, err
-	}
-	defer outFile.Close()
+	fileName := fileHeader.Filename
+	contentType := fileHeader.Header.Get("Content-Type")
+	fileSize := fileHeader.Size
 
-	size, err := io.Copy(outFile, file)
+	objectName, err := m.repo.UploadFile(ctx, m.bucketName, fileName, file, fileSize, contentType)
 	if err != nil {
 		return nil, err
 	}
 
-	media := &Media{
-		FileName:    filename,
-		ContentType: header.Header.Get("Content-Type"),
-		Size:        size,
-	}
-	return s.repo.Create(media)
-}
+	// Construct a URL or location to your S3 object.
+	// This depends on how you'll serve it, e.g. presigned or from a CDN, etc.
+	fileURL := fmt.Sprintf("%s/%s", m.bucketName, objectName)
 
-func (s *MediaService) Get(id uint) (*Media, error) {
-	return s.repo.FindByID(id)
+	return &MediaFile{
+		FileName: fileName,
+		FileType: contentType,
+		FileSize: fileSize,
+		URL:      fileURL,
+	}, nil
 }

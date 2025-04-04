@@ -1,27 +1,27 @@
 package message
 
-type IMessageService interface {
-	SendMessage(dialogID, senderID uint, content string) (*Message, error)
-	GetMessages(dialogID uint) ([]Message, error)
+type Service interface {
+	CreateMessage(userID uint, content string) (*Message, error)
+	ListMessages() ([]Message, error)
 }
 
-type MessageService struct {
-	repo IMessageRepository
+type service struct {
+	repo Repository
 }
 
-func NewMessageService(r IMessageRepository) IMessageService {
-	return &MessageService{repo: r}
+func NewService(repo Repository) Service {
+	return &service{repo: repo}
 }
 
-func (s *MessageService) SendMessage(dialogID, senderID uint, content string) (*Message, error) {
+func (s *service) CreateMessage(userID uint, content string) (*Message, error) {
 	msg := &Message{
-		DialogID: dialogID,
-		SenderID: senderID,
-		Content:  content,
+		UserID:  userID,
+		Content: content,
 	}
-	return s.repo.Create(msg)
+	err := s.repo.Save(msg)
+	return msg, err
 }
 
-func (s *MessageService) GetMessages(dialogID uint) ([]Message, error) {
-	return s.repo.FindByDialogID(dialogID)
+func (s *service) ListMessages() ([]Message, error) {
+	return s.repo.FindAll()
 }
