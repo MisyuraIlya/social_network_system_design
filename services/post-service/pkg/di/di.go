@@ -27,7 +27,7 @@ func BuildContainer(cfg *configs.Config) *Container {
 	kafkaProducer := kafka.NewProducer(cfg.KafkaBrokerURL, cfg.KafkaTopic)
 
 	postRepo := posts.NewRepository(dbConn.DB)
-	postService := posts.NewService(postRepo, kafkaProducer, cfg)
+	postService := posts.NewService(postRepo, kafkaProducer)
 
 	commentRepo := comments.NewRepository(dbConn.DB)
 	commentService := comments.NewService(commentRepo)
