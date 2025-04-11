@@ -1,15 +1,15 @@
-// pkg/di/di.go
 package di
 
 import (
-	"gorm.io/gorm"
-
 	"post-service/configs"
 	"post-service/internal/comments"
 	"post-service/internal/likes"
 	"post-service/internal/posts"
 	"post-service/internal/tags"
 	"post-service/pkg/db"
+	"post-service/pkg/kafka"
+
+	"gorm.io/gorm"
 )
 
 type Container struct {
@@ -18,15 +18,16 @@ type Container struct {
 	CommentService comments.Service
 	LikeService    likes.Service
 	TagService     tags.Service
+	KafkaProducer  *kafka.Producer
 }
 
 func BuildContainer(cfg *configs.Config) *Container {
-	// 1) Open DB connection
 	dbConn := db.NewDb(cfg)
 
-	// 2) Build repositories & services
+	kafkaProducer := kafka.NewProducer(cfg.KafkaBrokerURL, cfg.KafkaTopic)
+
 	postRepo := posts.NewRepository(dbConn.DB)
-	postService := posts.NewService(postRepo)
+	postService := posts.NewService(postRepo, kafkaProducer, cfg)
 
 	commentRepo := comments.NewRepository(dbConn.DB)
 	commentService := comments.NewService(commentRepo)
@@ -37,12 +38,12 @@ func BuildContainer(cfg *configs.Config) *Container {
 	tagRepo := tags.NewRepository(dbConn.DB)
 	tagService := tags.NewService(tagRepo)
 
-	// 3) Return container
 	return &Container{
 		DB:             dbConn.DB,
 		PostService:    postService,
 		CommentService: commentService,
 		LikeService:    likeService,
 		TagService:     tagService,
+		KafkaProducer:  kafkaProducer,
 	}
 }

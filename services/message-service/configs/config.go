@@ -6,16 +6,17 @@ import (
 )
 
 type Config struct {
-	AppPort      string
-	DBHost       string
-	DBPort       string
-	DBUser       string
-	DBPass       string
-	DBName       string
-	RedisHost    string
-	RedisPort    string
-	KafkaBrokers string // comma-separated
-	KafkaTopic   string
+	AppPort         string
+	DBHost          string
+	DBPort          string
+	DBUser          string
+	DBPass          string
+	DBName          string
+	RedisHost       string
+	RedisPort       string
+	KafkaBrokers    string
+	KafkaTopic      string
+	MediaServiceURL string // URL for the Media Service API
 }
 
 func LoadConfig() *Config {
@@ -30,6 +31,8 @@ func LoadConfig() *Config {
 		RedisPort:    getEnv("MESSAGE_REDIS_PORT", "6379"),
 		KafkaBrokers: getEnv("MESSAGE_KAFKA_BROKERS", "localhost:9092"),
 		KafkaTopic:   getEnv("MESSAGE_KAFKA_TOPIC", "new-message"),
+		// Corrected Env Var name and default URL for Media Service API
+		MediaServiceURL: getEnv("MEDIA_SERVICE_URL", "http://localhost:8084"),
 	}
 }
 

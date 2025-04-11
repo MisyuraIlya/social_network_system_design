@@ -22,7 +22,7 @@ func NewProducer(brokers []string, topic string) *KafkaProducer {
 
 func (k *KafkaProducer) Publish(message []byte) error {
 	err := k.Writer.WriteMessages(
-		context.Background(), // ✅ DO NOT PASS nil HERE
+		context.Background(),
 		kafka.Message{
 			Value: message,
 		},

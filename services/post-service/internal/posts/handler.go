@@ -2,6 +2,7 @@ package posts
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -10,43 +11,70 @@ import (
 	"post-service/pkg/res"
 )
 
-type HandlerDeps struct {
-	Config  *configs.Config
-	Service Service
-}
-
 type Handler struct {
 	config  *configs.Config
 	service Service
 }
 
-func NewHandler(router *http.ServeMux, deps HandlerDeps) {
-	h := &Handler{
-		config:  deps.Config,
-		service: deps.Service,
+func NewHandler(router *http.ServeMux, config *configs.Config, service Service) {
+	handler := &Handler{
+		config:  config,
+		service: service,
 	}
 
-	router.HandleFunc("/posts/", func(w http.ResponseWriter, r *http.Request) {
-		path := strings.TrimPrefix(r.URL.Path, "/posts")
-		if path == "" || path == "/" {
-			// Handle /posts
-			switch r.Method {
-			case http.MethodPost:
-				if err := h.create(w, r); err != nil {
-					res.Json(w, map[string]string{"error": err.Error()}, http.StatusInternalServerError)
-				}
-			case http.MethodGet:
-				if err := h.getAll(w, r); err != nil {
-					res.Json(w, map[string]string{"error": err.Error()}, http.StatusInternalServerError)
-				}
-			default:
-				res.Json(w, map[string]string{"error": "method not allowed"}, http.StatusMethodNotAllowed)
-			}
+	fmt.Println("Registering posts routes...")
+	router.HandleFunc("POST /posts", handler.create())
+	router.HandleFunc("GET /posts", handler.getAll())
+	router.HandleFunc("GET /posts/{id}", handler.getByID())
+	router.HandleFunc("PUT /posts/", handler.update())
+	router.HandleFunc("DELETE /posts/", handler.delete())
+}
+
+// create handles POST /posts requests.
+func (h *Handler) create() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			UserID      uint   `json:"user_id"`
+			Description string `json:"description"`
+			Media       string `json:"media"`
+		}
+
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			res.Json(w, map[string]string{"error": err.Error()}, http.StatusBadRequest)
 			return
 		}
 
-		// Handle /posts/{id}
-		idStr := strings.TrimPrefix(path, "/")
+		fmt.Printf("Received POST payload: %+v\n", payload)
+
+		if err := h.service.Create(payload.UserID, payload.Description, payload.Media); err != nil {
+			res.Json(w, map[string]string{"error": err.Error()}, http.StatusInternalServerError)
+			return
+		}
+
+		res.Json(w, map[string]string{"message": "post created"}, http.StatusCreated)
+	}
+}
+
+// getAll handles GET /posts requests.
+func (h *Handler) getAll() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		fmt.Println("Fetching all posts...")
+		posts, err := h.service.GetAll()
+		if err != nil {
+			res.Json(w, map[string]string{"error": err.Error()}, http.StatusInternalServerError)
+			return
+		}
+
+		fmt.Printf("Fetched %d posts from database\n", len(posts))
+		res.Json(w, posts, http.StatusOK)
+	}
+}
+
+// getByID handles GET /posts/{id} requests.
+func (h *Handler) getByID() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Extract the id from the URL (assumes URL is "/posts/{id}")
+		idStr := strings.TrimPrefix(r.URL.Path, "/posts/")
 		id64, err := strconv.ParseUint(idStr, 10, 64)
 		if err != nil {
 			res.Json(w, map[string]string{"error": "invalid post id"}, http.StatusBadRequest)
@@ -54,87 +82,63 @@ func NewHandler(router *http.ServeMux, deps HandlerDeps) {
 		}
 		id := uint(id64)
 
-		switch r.Method {
-		case http.MethodGet:
-			if err := h.getByID(w, r, id); err != nil {
-				res.Json(w, map[string]string{"error": err.Error()}, http.StatusInternalServerError)
-			}
-		case http.MethodPut:
-			if err := h.update(w, r, id); err != nil {
-				res.Json(w, map[string]string{"error": err.Error()}, http.StatusInternalServerError)
-			}
-		case http.MethodDelete:
-			if err := h.delete(w, r, id); err != nil {
-				res.Json(w, map[string]string{"error": err.Error()}, http.StatusInternalServerError)
-			}
-		default:
-			res.Json(w, map[string]string{"error": "method not allowed"}, http.StatusMethodNotAllowed)
+		post, err := h.service.GetByID(id)
+		if err != nil {
+			res.Json(w, map[string]string{"error": err.Error()}, http.StatusInternalServerError)
+			return
 		}
-	})
+		if post == nil {
+			res.Json(w, map[string]string{"error": "post not found"}, http.StatusNotFound)
+			return
+		}
+		res.Json(w, post, http.StatusOK)
+	}
 }
 
-func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
-	var payload struct {
-		UserID      uint   `json:"user_id"`
-		Description string `json:"description"`
-		Media       string `json:"media"`
-	}
+// update handles PUT /posts/{id} requests.
+func (h *Handler) update() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Extract the id from the URL (assumes URL is "/posts/{id}")
+		idStr := strings.TrimPrefix(r.URL.Path, "/posts/")
+		id64, err := strconv.ParseUint(idStr, 10, 64)
+		if err != nil {
+			res.Json(w, map[string]string{"error": "invalid post id"}, http.StatusBadRequest)
+			return
+		}
+		id := uint(id64)
 
-	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		res.Json(w, map[string]string{"error": err.Error()}, http.StatusBadRequest)
-		return err
-	}
+		var payload struct {
+			Description string `json:"description"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			res.Json(w, map[string]string{"error": err.Error()}, http.StatusBadRequest)
+			return
+		}
 
-	if err := h.service.Create(payload.UserID, payload.Description, payload.Media); err != nil {
-		return err
+		if err := h.service.Update(id, payload.Description); err != nil {
+			res.Json(w, map[string]string{"error": err.Error()}, http.StatusInternalServerError)
+			return
+		}
+		res.Json(w, map[string]string{"message": "post updated"}, http.StatusOK)
 	}
-
-	res.Json(w, map[string]string{"message": "post created"}, http.StatusCreated)
-	return nil
 }
 
-func (h *Handler) getAll(w http.ResponseWriter, r *http.Request) error {
-	posts, err := h.service.GetAll()
-	if err != nil {
-		return err
-	}
-	res.Json(w, posts, http.StatusOK)
-	return nil
-}
+// delete handles DELETE /posts/{id} requests.
+func (h *Handler) delete() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Extract the id from the URL (assumes URL is "/posts/{id}")
+		idStr := strings.TrimPrefix(r.URL.Path, "/posts/")
+		id64, err := strconv.ParseUint(idStr, 10, 64)
+		if err != nil {
+			res.Json(w, map[string]string{"error": "invalid post id"}, http.StatusBadRequest)
+			return
+		}
+		id := uint(id64)
 
-func (h *Handler) getByID(w http.ResponseWriter, r *http.Request, id uint) error {
-	post, err := h.service.GetByID(id)
-	if err != nil {
-		return err
+		if err := h.service.Delete(id); err != nil {
+			res.Json(w, map[string]string{"error": err.Error()}, http.StatusInternalServerError)
+			return
+		}
+		res.Json(w, map[string]string{"message": "post deleted"}, http.StatusOK)
 	}
-	if post == nil {
-		res.Json(w, map[string]string{"error": "post not found"}, http.StatusNotFound)
-		return nil
-	}
-	res.Json(w, post, http.StatusOK)
-	return nil
-}
-
-func (h *Handler) update(w http.ResponseWriter, r *http.Request, id uint) error {
-	var payload struct {
-		Description string `json:"description"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		res.Json(w, map[string]string{"error": err.Error()}, http.StatusBadRequest)
-		return err
-	}
-
-	if err := h.service.Update(id, payload.Description); err != nil {
-		return err
-	}
-	res.Json(w, map[string]string{"message": "post updated"}, http.StatusOK)
-	return nil
-}
-
-func (h *Handler) delete(w http.ResponseWriter, r *http.Request, id uint) error {
-	if err := h.service.Delete(id); err != nil {
-		return err
-	}
-	res.Json(w, map[string]string{"message": "post deleted"}, http.StatusOK)
-	return nil
 }

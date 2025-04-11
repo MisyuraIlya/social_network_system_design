@@ -7,10 +7,10 @@ import (
 	"github.com/gomodule/redigo/redis"
 )
 
-// Repository defines how we interact with our data store (Redis).
 type Repository interface {
 	SaveFeedItem(item FeedItem) error
 	GetFeedItemsByUserID(userID string) ([]FeedItem, error)
+	SaveFeedItemWithLimit(item FeedItem, limit int) error
 }
 
 type redisRepository struct {
@@ -22,6 +22,10 @@ func NewRepository(pool *redis.Pool) Repository {
 }
 
 func (r *redisRepository) SaveFeedItem(item FeedItem) error {
+	return r.SaveFeedItemWithLimit(item, 10)
+}
+
+func (r *redisRepository) SaveFeedItemWithLimit(item FeedItem, limit int) error {
 	conn := r.pool.Get()
 	defer conn.Close()
 
@@ -30,9 +34,12 @@ func (r *redisRepository) SaveFeedItem(item FeedItem) error {
 		return err
 	}
 
-	// For example: store feed items in a Redis List per user
 	key := fmt.Sprintf("feed:%s", item.UserID)
-	_, err = conn.Do("LPUSH", key, b)
+	if _, err = conn.Do("LPUSH", key, b); err != nil {
+		return err
+	}
+
+	_, err = conn.Do("LTRIM", key, 0, limit-1)
 	return err
 }
 
@@ -41,7 +48,7 @@ func (r *redisRepository) GetFeedItemsByUserID(userID string) ([]FeedItem, error
 	defer conn.Close()
 
 	key := fmt.Sprintf("feed:%s", userID)
-	values, err := redis.Values(conn.Do("LRANGE", key, 0, 50)) // get last 50 items
+	values, err := redis.Values(conn.Do("LRANGE", key, 0, 9))
 	if err != nil {
 		return nil, err
 	}

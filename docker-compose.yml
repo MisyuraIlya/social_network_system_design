@@ -1,6 +1,18 @@
 version: '3.9'
 
 services:
+  kafdrop:
+    image: obsidiandynamics/kafdrop:latest
+    container_name: kafdrop
+    environment:
+      KAFKA_BROKERCONNECT: kafka:9092
+      JVM_OPTS: "-Xms32M -Xmx64M"
+    ports:
+      - "9002:9000"
+    networks:
+      - socialnet
+    depends_on:
+      - kafka
   #################################################################
   #                           DATABASES                           #
   #################################################################
@@ -71,6 +83,8 @@ services:
       - redis_data:/data
     networks:
       - socialnet
+    ports:
+    - "6379:6379"
 
   minio:
     image: minio/minio:latest
@@ -145,6 +159,8 @@ services:
     build:
       context: ./services/post-service
       dockerfile: Dockerfile.dev
+    volumes:
+      - ./services/post-service:/app 
     environment:
       POST_DB_HOST: post-db
       POST_DB_PORT: 5432
@@ -154,6 +170,8 @@ services:
       POST_APP_PORT: ":8082"
       MEDIA_SERVICE_URL: http://media-service:8084
       KAFKA_BROKER_URL: kafka:9092
+      KAFKA_TOPIC: posts
+      USERS_SERVICE_URL: http://users-service:8081
     depends_on:
       - post-db
       - kafka
@@ -161,12 +179,15 @@ services:
       - socialnet
     ports:
       - "8082:8082"
+    command: ["air"]
 
   feed-service:
     container_name: feed-service
     build: 
       context: ./services/feed-service
       dockerfile: Dockerfile.dev
+    volumes:
+      - ./services/feed-service:/app 
     environment:
       FEED_APP_PORT: ":8083"
       FEED_REDIS_HOST: redis
@@ -182,6 +203,7 @@ services:
       - socialnet
     ports:
       - "8083:8083"
+    command: ["air"]
 
   media-service:
     container_name: media-service
@@ -256,7 +278,9 @@ services:
 
   api-gateway:
     container_name: api-gateway
-    build: ./services/api-gateway
+    build: 
+      context: ./services/api-gateway
+      dockerfile: Dockerfile.dev
     environment:
       GATEWAY_APP_PORT: ":8080"
       USERS_SERVICE_URL: http://users-service:8081
@@ -276,6 +300,7 @@ services:
       - socialnet
     ports:
       - "8080:8080"
+    command: ["air"]
 
 
   #################################################################

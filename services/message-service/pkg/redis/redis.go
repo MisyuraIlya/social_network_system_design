@@ -2,6 +2,7 @@ package redis
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"time"
 
@@ -16,8 +17,8 @@ type RedisClient struct {
 func NewRedisClient(host, port string) *RedisClient {
 	ctx := context.Background()
 	rdb := redis.NewClient(&redis.Options{
-		Addr:     host + ":" + port,
-		Password: "", // no password
+		Addr:     fmt.Sprintf("%s:%s", host, port),
+		Password: "",
 		DB:       0,
 	})
 
@@ -34,4 +35,12 @@ func (r *RedisClient) SetPopularChat(key string, value string, ttl time.Duration
 
 func (r *RedisClient) GetPopularChat(key string) (string, error) {
 	return r.Client.Get(r.Ctx, key).Result()
+}
+
+func (r *RedisClient) IncrChatPopularity(chatID uint, increment float64) error {
+	return r.Client.ZIncrBy(r.Ctx, "popular_chats", increment, fmt.Sprintf("%d", chatID)).Err()
+}
+
+func (r *RedisClient) GetTopPopularChats(limit int64) ([]string, error) {
+	return r.Client.ZRevRange(r.Ctx, "popular_chats", 0, limit-1).Result()
 }

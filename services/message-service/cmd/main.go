@@ -17,7 +17,6 @@ func main() {
 
 	pg := db.NewDb(cfg)
 	repo := message.NewRepository(pg.DB)
-	service := message.NewService(repo)
 
 	// Redis client
 	rds := redispkg.NewRedisClient(cfg.RedisHost, cfg.RedisPort)
@@ -29,6 +28,8 @@ func main() {
 	// Init dependencies
 	cache := message.NewCache(redisAdapter)
 	publisher := message.NewPublisher(kafkaProducer)
+	// Pass publisher and mediaSvcURL to NewService
+	service := message.NewService(repo, cache, publisher, cfg.MediaServiceURL)
 
 	// Router setup
 	router := http.NewServeMux()

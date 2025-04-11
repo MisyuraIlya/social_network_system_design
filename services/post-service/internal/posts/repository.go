@@ -1,6 +1,8 @@
 package posts
 
 import (
+	"fmt"
+
 	"gorm.io/gorm"
 )
 
@@ -16,12 +18,22 @@ type repository struct {
 	db *gorm.DB
 }
 
+// NewRepository creates a new repository and auto-migrates the Post model.
 func NewRepository(db *gorm.DB) Repository {
-	return &repository{db}
+	if err := db.AutoMigrate(&Post{}); err != nil {
+		panic("failed to auto-migrate Post model: " + err.Error())
+	}
+	return &repository{db: db}
 }
 
 func (r *repository) Create(post *Post) error {
-	return r.db.Create(post).Error
+	err := r.db.Create(post).Error
+	if err != nil {
+		fmt.Printf("Repository Create error: %v\n", err)
+	} else {
+		fmt.Printf("Post created with ID: %d\n", post.ID)
+	}
+	return err
 }
 
 func (r *repository) GetAll() ([]Post, error) {

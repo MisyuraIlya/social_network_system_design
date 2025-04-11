@@ -3,7 +3,9 @@ package friends
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"users-service/configs"
+	"users-service/pkg/middleware"
 	"users-service/pkg/res"
 )
 
@@ -22,15 +24,13 @@ func NewHandler(router *http.ServeMux, deps HandlerDeps) {
 		Config:  deps.Config,
 		Service: deps.Service,
 	}
-	router.HandleFunc("/users/friends/create", h.CreateFriend())
+	// Using dynamic route parameter for the GET endpoint.
+	router.Handle("POST /users/friends/create", middleware.IsAuthed(h.CreateFriend(), deps.Config))
+	router.Handle("GET /users/{id}/friends", h.GetFriends())
 }
 
 func (h *Handler) CreateFriend() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
 		var body struct {
 			UserID   int `json:"user_id"`
 			FriendID int `json:"friend_id"`
@@ -45,5 +45,27 @@ func (h *Handler) CreateFriend() http.HandlerFunc {
 			return
 		}
 		res.Json(w, map[string]string{"status": "friend added"}, http.StatusOK)
+	}
+}
+
+func (h *Handler) GetFriends() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Extract the user id from the dynamic segment "{id}".
+		idStr := r.PathValue("id")
+		if idStr == "" {
+			http.Error(w, "user id is required", http.StatusBadRequest)
+			return
+		}
+		userID, err := strconv.Atoi(idStr)
+		if err != nil {
+			http.Error(w, "invalid user id", http.StatusBadRequest)
+			return
+		}
+		friends, err := h.Service.GetFriends(userID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		res.Json(w, friends, http.StatusOK)
 	}
 }

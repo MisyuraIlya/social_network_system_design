@@ -1,0 +1,1 @@
+1. preferably to create 2 S3 replication 

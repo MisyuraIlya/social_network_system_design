@@ -29,7 +29,7 @@ func InitRoutes(cfg *configs.Config) http.Handler {
 
 	// SECURE ROUTES
 	mux.Handle("/users/", secureProxyHandler(cfg.UserServiceURL, auth))
-	mux.Handle("/posts/", secureProxyHandler(cfg.PostServiceURL, auth))
+	mux.Handle("/posts", secureProxyHandler(cfg.PostServiceURL, auth))
 	mux.Handle("/messages/", secureProxyHandler(cfg.MessageServiceURL, auth))
 	mux.Handle("/media/", secureProxyHandler(cfg.MediaServiceURL, auth))
 	mux.Handle("/feed", secureProxyHandler(cfg.FeedServiceURL, auth))

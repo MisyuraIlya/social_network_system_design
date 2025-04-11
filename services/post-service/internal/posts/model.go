@@ -13,3 +13,9 @@ type Post struct {
 	Views       int
 	CreatedAt   time.Time
 }
+
+type UserFriends struct {
+	UserID    uint      `json:"UserID"`
+	FriendID  uint      `json:"FriendID"`
+	CreatedAt time.Time `json:"CreatedAt"`
+}

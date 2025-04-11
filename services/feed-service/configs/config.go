@@ -17,6 +17,7 @@ type Config struct {
 	KafkaGroupID string
 
 	UserServiceURL string
+	PostServiceURL string // Added for Post Service interaction
 }
 
 func LoadConfig() *Config {
@@ -29,6 +30,7 @@ func LoadConfig() *Config {
 		KafkaTopic:     getEnv("FEED_KAFKA_TOPIC", "posts"),
 		KafkaGroupID:   getEnv("FEED_KAFKA_GROUP_ID", "feed-service-group"),
 		UserServiceURL: getEnv("USER_SERVICE_URL", "http://localhost:8081"),
+		PostServiceURL: getEnv("POST_SERVICE_URL", "http://localhost:8084"), // Added default Post Service URL
 	}
 }
 

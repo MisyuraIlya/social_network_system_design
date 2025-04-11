@@ -14,7 +14,6 @@ import (
 func App() http.Handler {
 	cfg := configs.LoadConfig()
 	container := di.BuildContainer(cfg)
-
 	container.DB.AutoMigrate(
 		&posts.Post{},
 		&comments.Comment{},
@@ -24,31 +23,10 @@ func App() http.Handler {
 	)
 
 	router := http.NewServeMux()
-
-	// Register post routes
-	posts.NewHandler(router, posts.HandlerDeps{
-		Config:  cfg,
-		Service: container.PostService,
-	})
-
-	// Register comments
-	comments.NewHandler(router, comments.HandlerDeps{
-		Config:  cfg,
-		Service: container.CommentService,
-	})
-
-	// Register likes
-	likes.NewHandler(router, likes.HandlerDeps{
-		Config:  cfg,
-		Service: container.LikeService,
-	})
-
-	// Register tags
-	tags.NewHandler(router, tags.HandlerDeps{
-		Config:  cfg,
-		Service: container.TagService,
-	})
-
+	posts.NewHandler(router, cfg, container.PostService)
+	comments.NewHandler(router, cfg, container.CommentService)
+	likes.NewHandler(router, cfg, container.LikeService)
+	tags.NewHandler(router, cfg, container.TagService)
 	return router
 }
 
