@@ -180,16 +180,19 @@ services:
   #                   CORE MICROSERVICES                         #
   #################################################################
   user-service:
-    container_name: user-service
-    build: ./services/user-service
+    build:
+      context: ./services/user-service
+    volumes:
+      - ./services/user-service:/app
     environment:
       APP_PORT: ":8081"
-
       DB_HOST: user-db
       DB_PORT: "5432"
       DB_USER: user
       DB_PASSWORD: userpass
       DB_NAME: user_db
+      AIR_WATCHER_FORCE_POLLING: "true"   
+      AIR_TMP_DIR: "/app/tmp" 
     depends_on:
       user-db:
         condition: service_healthy

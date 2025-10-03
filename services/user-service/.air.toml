@@ -1,0 +1,9 @@
+root = "."
+tmp_dir = "tmp"
+[build]
+  cmd = "go build -o ./tmp/service ./cmd/main.go"
+  bin = "./tmp/service"
+  full_bin = "APP_PORT=:8081 DB_HOST=user-db DB_PORT=5432 DB_USER=user DB_PASSWORD=userpass DB_NAME=user_db ./tmp/service"
+
+  include_ext = ["go", "mod", "sum"]
+  exclude_dir = ["vendor", "tmp", "dist", ".git"]
