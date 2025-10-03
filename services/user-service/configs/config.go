@@ -14,26 +14,27 @@ type Config struct {
 	DBName  string
 }
 
-func LoadConfig() *Config {
-	return &Config{
-		AppPort: getEnv("USER_APP_PORT", ":8081"),
-		DBHost:  getEnv("USER_DB_HOST", "localhost"),
-		DBPort:  getEnv("USER_DB_PORT", "5432"),
-		DBUser:  getEnv("USER_DB_USER", "postgres"),
-		DBPass:  getEnv("USER_DB_PASS", "postgres"),
-		DBName:  getEnv("USER_DB_NAME", "user_db"),
-	}
-}
-
-func getEnv(key, fallback string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
+func env(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
 	}
 	return fallback
 }
 
+func LoadConfig() *Config {
+	return &Config{
+		AppPort: env("APP_PORT", ":8081"),
+		DBHost:  env("DB_HOST", "user-db"),
+		DBPort:  env("DB_PORT", "5432"),
+		DBUser:  env("DB_USER", "user"),
+		DBPass:  env("DB_PASSWORD", "userpass"),
+		DBName:  env("DB_NAME", "user_db"),
+	}
+}
+
 func (c *Config) DSN() string {
-	return fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
+	return fmt.Sprintf(
+		"host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
 		c.DBHost, c.DBPort, c.DBUser, c.DBPass, c.DBName,
 	)
 }

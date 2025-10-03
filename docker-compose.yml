@@ -183,7 +183,10 @@ services:
     container_name: user-service
     build: ./services/user-service
     environment:
+      APP_PORT: ":8081"
+
       DB_HOST: user-db
+      DB_PORT: "5432"
       DB_USER: user
       DB_PASSWORD: userpass
       DB_NAME: user_db
