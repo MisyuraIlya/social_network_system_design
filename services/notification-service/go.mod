@@ -1,6 +1,6 @@
-module users-service
+module message-service
 
-go 1.22.2
+go 1.25
 
 require (
 	github.com/gabriel-vasile/mimetype v1.4.8 // indirect

@@ -1,4 +1,4 @@
-module message-service
+module users-service
 
 go 1.25
 
