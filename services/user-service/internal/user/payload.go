@@ -1,25 +1,24 @@
 package user
 
 type RegisterRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
-	Name     string `json:"name"`
+	Email    string `json:"email" validate:"required,email"`
+	Password string `json:"password" validate:"required,min=6"`
+	Name     string `json:"name" validate:"required"`
 }
 
 type RegisterResponse struct {
-	ID    uint   `json:"id"`
-	Email string `json:"email"`
-	Name  string `json:"name"`
+	UserID string `json:"user_id"`
+	Email  string `json:"email"`
+	Name   string `json:"name"`
 }
 
 type LoginRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	Email    string `json:"email" validate:"required,email"`
+	Password string `json:"password" validate:"required"`
 }
 
 type LoginResponse struct {
-	Token     string `json:"token"`
-	UserID    uint   `json:"user_id"`
-	UserEmail string `json:"user_email"`
-	Message   string `json:"message"`
+	UserID  string `json:"user_id"`
+	Email   string `json:"email"`
+	Message string `json:"message"`
 }

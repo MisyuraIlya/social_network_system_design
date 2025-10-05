@@ -1,51 +1,75 @@
 package user
 
 import (
+	"errors"
+
+	"users-service/pkg/shard"
+
 	"gorm.io/gorm"
 )
 
+type ShardedDB interface {
+	Get(shardID int) *gorm.DB
+}
+
 type IUserRepository interface {
 	Create(u *User) (*User, error)
-	FindByEmail(email string) (*User, error)
-	FindAll() ([]User, error)
-	FindByID(id uint) (*User, error)
+	FindByEmail(email string, shardID int) (*User, error)
+	FindByUserID(uid string) (*User, error)
+	FindAllByShard(shardID int) ([]User, error)
+	FindAllByShardPaged(shardID, limit, offset int) ([]User, error)
 }
 
 type UserRepository struct {
-	DB *gorm.DB
+	mdb ShardedDB
 }
 
-func NewUserRepository(db *gorm.DB) IUserRepository {
-	return &UserRepository{DB: db}
+func NewUserRepository(mdb ShardedDB) IUserRepository {
+	return &UserRepository{mdb: mdb}
 }
 
-func (repo *UserRepository) Create(u *User) (*User, error) {
-	if err := repo.DB.Create(u).Error; err != nil {
+func (r *UserRepository) Create(u *User) (*User, error) {
+	if err := r.mdb.Get(u.ShardID).Create(u).Error; err != nil {
 		return nil, err
 	}
 	return u, nil
 }
 
-func (repo *UserRepository) FindByEmail(email string) (*User, error) {
-	var user User
-	if err := repo.DB.Where("email = ?", email).First(&user).Error; err != nil {
+func (r *UserRepository) FindByEmail(email string, shardID int) (*User, error) {
+	var u User
+	if err := r.mdb.Get(shardID).Where("email = ?", email).First(&u).Error; err != nil {
 		return nil, err
 	}
-	return &user, nil
+	return &u, nil
 }
 
-func (repo *UserRepository) FindAll() ([]User, error) {
+func (r *UserRepository) FindByUserID(uid string) (*User, error) {
+	sh, ok := shard.ExtractShard(uid)
+	if !ok {
+		return nil, errors.New("invalid user_id format")
+	}
+	var u User
+	if err := r.mdb.Get(sh).Where("user_id = ?", uid).First(&u).Error; err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+func (r *UserRepository) FindAllByShard(shardID int) ([]User, error) {
 	var users []User
-	if err := repo.DB.Find(&users).Error; err != nil {
+	if err := r.mdb.Get(shardID).Find(&users).Error; err != nil {
 		return nil, err
 	}
 	return users, nil
 }
 
-func (repo *UserRepository) FindByID(id uint) (*User, error) {
-	var user User
-	if err := repo.DB.First(&user, id).Error; err != nil {
+func (r *UserRepository) FindAllByShardPaged(shardID, limit, offset int) ([]User, error) {
+	var users []User
+	if err := r.mdb.Get(shardID).
+		Order("created_at DESC").
+		Limit(limit).Offset(offset).
+		Find(&users).Error; err != nil {
 		return nil, err
 	}
-	return &user, nil
+	return users, nil
 }

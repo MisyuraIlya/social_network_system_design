@@ -5,32 +5,34 @@ import (
 	"log"
 	"net/http"
 
-	"users-service/configs"
 	"users-service/internal/user"
-	"users-service/pkg/db"
+	multidb "users-service/pkg/db"
+
+	"gorm.io/gorm"
 )
 
 func main() {
-	cfg := configs.LoadConfig()
+	// Open all shard connections from SHARDS_JSON
+	mdb := multidb.OpenMultiFromEnv()
 
-	database := db.NewDb(cfg)
-	database.DB.AutoMigrate(&user.User{})
+	// Auto-migrate the users table on every shard
+	if err := mdb.Range(func(id int, db *gorm.DB) error {
+		return db.AutoMigrate(&user.User{})
+	}); err != nil {
+		log.Fatalf("migration failed: %v", err)
+	}
 
-	repo := user.NewUserRepository(database.DB)
-	svc := user.NewUserService(repo)
-
-	handler := user.NewUserHandler(svc)
+	// Wire repository/service/handler
+	repo := user.NewUserRepository(mdb) // multi-shard aware
+	svc := user.NewUserService(repo)    // picks shard per request
+	handler := user.NewUserHandler(svc) // HTTP
 
 	mux := http.NewServeMux()
 	user.RegisterRoutes(mux, handler)
 
-	srv := &http.Server{
-		Addr:    cfg.AppPort,
-		Handler: mux,
-	}
-
-	fmt.Printf("User Service listening on %s\n", cfg.AppPort)
-	if err := srv.ListenAndServe(); err != nil {
+	addr := ":8081"
+	fmt.Printf("User Service listening on %s\n", addr)
+	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatalf("Server failed: %v\n", err)
 	}
 }

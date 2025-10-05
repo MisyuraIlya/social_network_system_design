@@ -1,50 +1,85 @@
 package user
 
-import "errors"
+import (
+	"crypto/rand"
+	"encoding/binary"
+	"errors"
+	"fmt"
+	"os"
+	"strconv"
+
+	"users-service/pkg/shard"
+)
 
 type IUserService interface {
 	Register(email, password, name string) (*User, error)
 	Login(email, password string) (*User, error)
-	ListAll() ([]User, error)
-	GetByID(id uint) (*User, error)
+	ListAll(shardID int) ([]User, error)
+	ListShard(shardID, limit, offset int) ([]User, error)
+	GetByUserID(uid string) (*User, error)
 }
 
 type UserService struct {
-	repo IUserRepository
+	repo      IUserRepository
+	numShards int
 }
 
 func NewUserService(repo IUserRepository) IUserService {
-	return &UserService{repo: repo}
+	ns := 1
+	if v := os.Getenv("NUM_SHARDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			ns = n
+		}
+	}
+	return &UserService{repo: repo, numShards: ns}
 }
 
 func (s *UserService) Register(email, password, name string) (*User, error) {
-	existing, _ := s.repo.FindByEmail(email)
-	if existing != nil {
+	sh := shard.PickShard(email, s.numShards)
+
+	// ensure uniqueness on the owning shard
+	if existing, _ := s.repo.FindByEmail(email, sh); existing != nil {
 		return nil, errors.New("user already exists")
 	}
-	newUser := &User{
+
+	// user_id format: "<shard>-<random64hex>"
+	var b [8]byte
+	_, _ = rand.Read(b[:])
+	uid := fmt.Sprintf("%d-%x", sh, binary.BigEndian.Uint64(b[:]))
+
+	u := &User{
+		UserID:   uid,
+		ShardID:  sh,
 		Email:    email,
-		Password: password,
+		Password: password, // TODO: bcrypt
 		Name:     name,
 	}
-	return s.repo.Create(newUser)
+	return s.repo.Create(u)
 }
 
 func (s *UserService) Login(email, password string) (*User, error) {
-	usr, err := s.repo.FindByEmail(email)
-	if err != nil {
+	sh := shard.PickShard(email, s.numShards)
+	usr, err := s.repo.FindByEmail(email, sh)
+	if err != nil || usr.Password != password {
 		return nil, errors.New("wrong credentials")
-	}
-	if usr.Password != password {
-		return nil, errors.New("wrong password")
 	}
 	return usr, nil
 }
 
-func (s *UserService) ListAll() ([]User, error) {
-	return s.repo.FindAll()
+func (s *UserService) ListAll(shardID int) ([]User, error) {
+	return s.repo.FindAllByShard(shardID)
 }
 
-func (s *UserService) GetByID(id uint) (*User, error) {
-	return s.repo.FindByID(id)
+func (s *UserService) GetByUserID(uid string) (*User, error) {
+	return s.repo.FindByUserID(uid)
+}
+
+func (s *UserService) ListShard(shardID, limit, offset int) ([]User, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	return s.repo.FindAllByShardPaged(shardID, limit, offset)
 }
