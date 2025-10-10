@@ -4,35 +4,51 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"strconv"
 
 	"users-service/internal/user"
-	multidb "users-service/pkg/db"
+	"users-service/pkg/db"
 
 	"gorm.io/gorm"
 )
 
-func main() {
-	// Open all shard connections from SHARDS_JSON
-	mdb := multidb.OpenMultiFromEnv()
+type ShardPicker interface {
+	Pick(shardID int) *gorm.DB
+	ForcePrimary(shardID int) *gorm.DB
+}
 
-	// Auto-migrate the users table on every shard
-	if err := mdb.Range(func(id int, db *gorm.DB) error {
-		return db.AutoMigrate(&user.User{})
-	}); err != nil {
-		log.Fatalf("migration failed: %v", err)
+func main() {
+	store := db.OpenFromEnv()
+
+	if os.Getenv("AUTO_MIGRATE") == "true" {
+		numShards := mustAtoi(os.Getenv("NUM_SHARDS"))
+		for i := 0; i < numShards; i++ {
+			if err := store.ForcePrimary(i).AutoMigrate(&user.User{}); err != nil {
+				log.Fatalf("migration failed on shard %d: %v", i, err)
+			}
+		}
 	}
 
-	// Wire repository/service/handler
-	repo := user.NewUserRepository(mdb) // multi-shard aware
-	svc := user.NewUserService(repo)    // picks shard per request
-	handler := user.NewUserHandler(svc) // HTTP
+	repo := user.NewUserRepository(store)
+	svc := user.NewUserService(repo)
+	handler := user.NewUserHandler(svc)
 
 	mux := http.NewServeMux()
 	user.RegisterRoutes(mux, handler)
 
-	addr := ":8081"
-	fmt.Printf("User Service listening on %s\n", addr)
-	if err := http.ListenAndServe(addr, mux); err != nil {
-		log.Fatalf("Server failed: %v\n", err)
+	addr := os.Getenv("APP_PORT")
+	if addr == "" {
+		addr = ":8081"
 	}
+	fmt.Printf("User Service listening on %s\n", addr)
+	log.Fatal(http.ListenAndServe(addr, mux))
+}
+
+func mustAtoi(s string) int {
+	n, _ := strconv.Atoi(s)
+	if n <= 0 {
+		n = 1
+	}
+	return n
 }

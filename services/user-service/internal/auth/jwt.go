@@ -2,13 +2,21 @@ package auth
 
 import (
 	"errors"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 )
 
-var jwtKey = []byte("replace-this-with-a-strong-secret")
+func secret() []byte {
+	s := os.Getenv("JWT_SECRET")
+	if s == "" {
+		// dev fallback only; set JWT_SECRET in production
+		s = "replace-this-with-a-strong-secret"
+	}
+	return []byte(s)
+}
 
 func MakeJWT(userID string, shardID int) (string, error) {
 	claims := jwt.MapClaims{
@@ -18,7 +26,7 @@ func MakeJWT(userID string, shardID int) (string, error) {
 		"exp": time.Now().Add(24 * time.Hour).Unix(),
 	}
 	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return tok.SignedString(jwtKey)
+	return tok.SignedString(secret())
 }
 
 func ParseAuthHeader(authz string) (userID string, shardID int, err error) {
@@ -27,7 +35,7 @@ func ParseAuthHeader(authz string) (userID string, shardID int, err error) {
 	}
 	tokenStr := strings.TrimPrefix(authz, "Bearer ")
 	tok, err := jwt.Parse(tokenStr, func(t *jwt.Token) (any, error) {
-		return jwtKey, nil
+		return secret(), nil
 	})
 	if err != nil || !tok.Valid {
 		return "", 0, errors.New("invalid token")
@@ -37,7 +45,6 @@ func ParseAuthHeader(authz string) (userID string, shardID int, err error) {
 		return "", 0, errors.New("bad claims")
 	}
 	uid, _ := mc["sub"].(string)
-	// sh comes as float64 from JSON numbers
 	shf, ok := mc["sh"].(float64)
 	if !ok {
 		return "", 0, errors.New("missing shard claim")

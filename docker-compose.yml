@@ -34,7 +34,8 @@ services:
       retries: 12
     volumes:
       - shard1-pg-0-data:/bitnami/postgresql
-    networks: [socialnet]
+    networks:
+      socialnet: {}
     ports:
       - "15432:5432"   # admin/debug access to node 0
 
@@ -43,7 +44,9 @@ services:
     image: public.ecr.aws/bitnami/postgresql-repmgr:latest
     container_name: shard1-pg-1
     restart: unless-stopped
-    depends_on: [shard1-pg-0]
+    depends_on:
+      shard1-pg-0:
+        condition: service_started
     environment:
       - POSTGRESQL_USERNAME=app
       - POSTGRESQL_PASSWORD=app_pass_shard1
@@ -65,7 +68,8 @@ services:
       retries: 12
     volumes:
       - shard1-pg-1-data:/bitnami/postgresql
-    networks: [socialnet]
+    networks:
+      socialnet: {}
     ports:
       - "15433:5432"   # admin/debug access to node 1
 
@@ -74,7 +78,9 @@ services:
     image: public.ecr.aws/bitnami/postgresql-repmgr:latest
     container_name: shard1-pg-2
     restart: unless-stopped
-    depends_on: [shard1-pg-0]
+    depends_on:
+      shard1-pg-0:
+        condition: service_started
     environment:
       - POSTGRESQL_USERNAME=app
       - POSTGRESQL_PASSWORD=app_pass_shard1
@@ -96,7 +102,8 @@ services:
       retries: 12
     volumes:
       - shard1-pg-2-data:/bitnami/postgresql
-    networks: [socialnet]
+    networks:
+      socialnet: {}
     ports:
       - "15434:5432"   # admin/debug access to node 2
 
@@ -106,9 +113,12 @@ services:
     container_name: shard1-pgpool
     restart: unless-stopped
     depends_on:
-      - shard1-pg-0
-      - shard1-pg-1
-      - shard1-pg-2
+      shard1-pg-0:
+        condition: service_healthy
+      shard1-pg-1:
+        condition: service_healthy
+      shard1-pg-2:
+        condition: service_healthy
     environment:
       - PGPOOL_BACKEND_NODES=0:shard1-pg-0:5432,1:shard1-pg-1:5432,2:shard1-pg-2:5432
       - PGPOOL_SR_CHECK_USER=repl
@@ -116,12 +126,19 @@ services:
       - PGPOOL_POSTGRES_USERNAME=app
       - PGPOOL_POSTGRES_PASSWORD=app_pass_shard1
       - PGPOOL_ENABLE_LOAD_BALANCING=yes
+      # REQUIRED by Bitnami image:
+      - PGPOOL_ADMIN_USERNAME=admin
+      - PGPOOL_ADMIN_PASSWORD=adminpass
     healthcheck:
-      test: ["CMD-SHELL", "</dev/tcp/127.0.0.1/5432"]
-      interval: 15s
+      # Ensure bash for /dev/tcp
+      test: ["CMD-SHELL", "bash -lc '</dev/tcp/127.0.0.1/5432' || exit 1"]
+      interval: 10s
       timeout: 3s
-      retries: 10
-    networks: [socialnet]
+      retries: 30
+    networks:
+      socialnet:
+        aliases:
+          - shard1-pgpool
     ports:
       - "6433:5432"    # EXPOSED: client entrypoint for Shard 1
 
@@ -155,7 +172,8 @@ services:
       retries: 12
     volumes:
       - shard2-pg-0-data:/bitnami/postgresql
-    networks: [socialnet]
+    networks:
+      socialnet: {}
     ports:
       - "25432:5432"   # admin/debug access to node 0
 
@@ -164,7 +182,9 @@ services:
     image: public.ecr.aws/bitnami/postgresql-repmgr:latest
     container_name: shard2-pg-1
     restart: unless-stopped
-    depends_on: [shard2-pg-0]
+    depends_on:
+      shard2-pg-0:
+        condition: service_started
     environment:
       - POSTGRESQL_USERNAME=app
       - POSTGRESQL_PASSWORD=app_pass_shard2
@@ -186,7 +206,8 @@ services:
       retries: 12
     volumes:
       - shard2-pg-1-data:/bitnami/postgresql
-    networks: [socialnet]
+    networks:
+      socialnet: {}
     ports:
       - "25433:5432"   # admin/debug access to node 1
 
@@ -195,7 +216,9 @@ services:
     image: public.ecr.aws/bitnami/postgresql-repmgr:latest
     container_name: shard2-pg-2
     restart: unless-stopped
-    depends_on: [shard2-pg-0]
+    depends_on:
+      shard2-pg-0:
+        condition: service_started
     environment:
       - POSTGRESQL_USERNAME=app
       - POSTGRESQL_PASSWORD=app_pass_shard2
@@ -217,7 +240,8 @@ services:
       retries: 12
     volumes:
       - shard2-pg-2-data:/bitnami/postgresql
-    networks: [socialnet]
+    networks:
+      socialnet: {}
     ports:
       - "25434:5432"   # admin/debug access to node 2
 
@@ -227,9 +251,12 @@ services:
     container_name: shard2-pgpool
     restart: unless-stopped
     depends_on:
-      - shard2-pg-0
-      - shard2-pg-1
-      - shard2-pg-2
+      shard2-pg-0:
+        condition: service_healthy
+      shard2-pg-1:
+        condition: service_healthy
+      shard2-pg-2:
+        condition: service_healthy
     environment:
       - PGPOOL_BACKEND_NODES=0:shard2-pg-0:5432,1:shard2-pg-1:5432,2:shard2-pg-2:5432
       - PGPOOL_SR_CHECK_USER=repl
@@ -237,12 +264,18 @@ services:
       - PGPOOL_POSTGRES_USERNAME=app
       - PGPOOL_POSTGRES_PASSWORD=app_pass_shard2
       - PGPOOL_ENABLE_LOAD_BALANCING=yes
+      # REQUIRED by Bitnami image:
+      - PGPOOL_ADMIN_USERNAME=admin
+      - PGPOOL_ADMIN_PASSWORD=adminpass
     healthcheck:
-      test: ["CMD-SHELL", "</dev/tcp/127.0.0.1/5432"]
-      interval: 15s
+      test: ["CMD-SHELL", "bash -lc '</dev/tcp/127.0.0.1/5432' || exit 1"]
+      interval: 10s
       timeout: 3s
-      retries: 10
-    networks: [socialnet]
+      retries: 30
+    networks:
+      socialnet:
+        aliases:
+          - shard2-pgpool
     ports:
       - "7433:5432"    # EXPOSED: client entrypoint for Shard 2
 
@@ -258,7 +291,8 @@ services:
       POSTGRES_DB: post_db
     volumes:
       - post_db_data:/var/lib/postgresql/data
-    networks: [socialnet]
+    networks:
+      socialnet: {}
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U post -d post_db"]
       interval: 5s
@@ -276,7 +310,8 @@ services:
       POSTGRES_DB: feedback_db
     volumes:
       - feedback_db_data:/var/lib/postgresql/data
-    networks: [socialnet]
+    networks:
+      socialnet: {}
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U feedback -d feedback_db"]
       interval: 5s
@@ -294,7 +329,8 @@ services:
       POSTGRES_DB: message_db
     volumes:
       - message_db_data:/var/lib/postgresql/data
-    networks: [socialnet]
+    networks:
+      socialnet: {}
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U notify -d message_db"]
       interval: 5s
@@ -312,7 +348,8 @@ services:
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis_feed_data:/data
-    networks: [socialnet]
+    networks:
+      socialnet: {}
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -325,7 +362,8 @@ services:
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis_message_data:/data
-    networks: [socialnet]
+    networks:
+      socialnet: {}
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -338,7 +376,8 @@ services:
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis_feedback_data:/data
-    networks: [socialnet]
+    networks:
+      socialnet: {}
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -363,7 +402,8 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
       CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
-    networks: [socialnet]
+    networks:
+      socialnet: {}
     volumes:
       - kafka_data:/var/lib/kafka/data
     healthcheck:
@@ -388,7 +428,8 @@ services:
       - "9001:9001"
     volumes:
       - minio_data:/data
-    networks: [socialnet]
+    networks:
+      socialnet: {}
     healthcheck:
       test: ["CMD-SHELL", "curl -s http://localhost:9000/minio/health/ready || exit 1"]
       interval: 5s
@@ -409,17 +450,28 @@ services:
       NUM_SHARDS: "2"
       SHARDS_JSON: >
         [
-          {"id":0,"dsn":"host=shard1-pgpool port=5432 user=app password=app_pass_shard1 dbname=appdb sslmode=disable"},
-          {"id":1,"dsn":"host=shard2-pgpool port=5432 user=app password=app_pass_shard2 dbname=appdb sslmode=disable"}
+          {"id":0,
+          "writer":"host=shard1-pgpool port=5432 user=app password=app_pass_shard1 dbname=appdb sslmode=disable",
+          "readers":[
+            "host=shard1-pgpool port=5432 user=app password=app_pass_shard1 dbname=appdb sslmode=disable"
+          ]},
+          {"id":1,
+          "writer":"host=shard2-pgpool port=5432 user=app password=app_pass_shard2 dbname=appdb sslmode=disable",
+          "readers":[
+            "host=shard2-pgpool port=5432 user=app password=app_pass_shard2 dbname=appdb sslmode=disable"
+          ]}
         ]
+      JWT_SECRET: "super-long-random-secret"
+      AUTO_MIGRATE: "true"
       AIR_WATCHER_FORCE_POLLING: "true"
       AIR_TMP_DIR: "/app/tmp"
     depends_on:
       shard1-pgpool:
-        condition: service_started
+        condition: service_healthy
       shard2-pgpool:
-        condition: service_started
-    networks: [socialnet]
+        condition: service_healthy
+    networks:
+      socialnet: {}
     ports:
       - "8081:8081"
 
@@ -443,7 +495,8 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
-    networks: [socialnet]
+    networks:
+      socialnet: {}
     ports:
       - "8082:8082"
 
@@ -461,7 +514,8 @@ services:
         condition: service_healthy
       kafka:
         condition: service_healthy
-    networks: [socialnet]
+    networks:
+      socialnet: {}
     ports:
       - "8083:8083"
 
@@ -480,7 +534,8 @@ services:
         condition: service_healthy
       redis-feedback:
         condition: service_healthy
-    networks: [socialnet]
+    networks:
+      socialnet: {}
     ports:
       - "8084:8084"
 
@@ -502,7 +557,8 @@ services:
         condition: service_healthy
       redis-message:
         condition: service_healthy
-    networks: [socialnet]
+    networks:
+      socialnet: {}
     ports:
       - "8085:8085"
 
@@ -514,7 +570,8 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
-    networks: [socialnet]
+    networks:
+      socialnet: {}
     ports:
       - "8086:8086"
 
@@ -528,7 +585,8 @@ services:
     depends_on:
       minio:
         condition: service_healthy
-    networks: [socialnet]
+    networks:
+      socialnet: {}
     ports:
       - "8088:8088"
 
@@ -544,7 +602,8 @@ services:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
     ports:
       - "80:80"
-    networks: [socialnet]
+    networks:
+      socialnet: {}
 
   api-gateway:
     container_name: api-gateway
@@ -572,7 +631,8 @@ services:
         condition: service_started
       notification-service:
         condition: service_started
-    networks: [socialnet]
+    networks:
+      socialnet: {}
     ports:
       - "8080:8080"
 
@@ -590,7 +650,8 @@ services:
       SWAGGER_JSON: /openapi/combined_openapi.yaml
     volumes:
       - ./combined_openapi.yaml:/openapi/combined_openapi.yaml:ro
-    networks: [socialnet]
+    networks:
+      socialnet: {}
 
 networks:
   socialnet:

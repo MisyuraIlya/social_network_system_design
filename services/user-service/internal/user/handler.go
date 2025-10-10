@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"users-service/internal/auth"
+	"users-service/pkg/req"
+	"users-service/pkg/res"
 )
 
 type UserHandler struct {
@@ -23,7 +25,7 @@ func RegisterRoutes(mux *http.ServeMux, h *UserHandler) {
 		case http.MethodPost:
 			h.Register(w, r)
 		case http.MethodGet:
-			h.ListMine(w, r) // <-- lists only the caller's shard via JWT
+			h.ListMine(w, r) // lists only the caller's shard via JWT
 		default:
 			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		}
@@ -63,58 +65,49 @@ func RegisterRoutes(mux *http.ServeMux, h *UserHandler) {
 }
 
 func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
-		Name     string `json:"name"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	body, err := req.HandleBody[RegisterRequest](&w, r)
+	if err != nil {
+		// HandleBody already wrote 400/422 JSON
 		return
 	}
 	u, err := h.Service.Register(body.Email, body.Password, body.Name)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusConflict)
+		res.Json(w, map[string]any{"error": err.Error()}, http.StatusConflict)
 		return
 	}
 
-	// issue a JWT on register as well (handy for immediate login)
+	// issue a JWT on register as well
 	tok, _ := auth.MakeJWT(u.UserID, u.ShardID)
 
 	w.Header().Set("X-Shard-ID", strconv.Itoa(u.ShardID)) // debug only
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]any{
+	res.Json(w, map[string]any{
 		"user_id":      u.UserID,
 		"email":        u.Email,
 		"name":         u.Name,
 		"access_token": tok,
-	})
+	}, http.StatusCreated)
 }
 
 func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	body, err := req.HandleBody[LoginRequest](&w, r)
+	if err != nil {
 		return
 	}
 	u, err := h.Service.Login(body.Email, body.Password)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
+		res.Json(w, map[string]any{"error": "unauthorized"}, http.StatusUnauthorized)
 		return
 	}
 	tok, _ := auth.MakeJWT(u.UserID, u.ShardID)
 
 	w.Header().Set("X-Shard-ID", strconv.Itoa(u.ShardID)) // debug only
-	json.NewEncoder(w).Encode(map[string]any{
+	res.Json(w, map[string]any{
 		"message":      "login successful",
 		"user_id":      u.UserID,
 		"name":         u.Name,
 		"email":        u.Email,
 		"access_token": tok,
-	})
+	}, http.StatusOK)
 }
 
 func (h *UserHandler) GetUser(w http.ResponseWriter, _ *http.Request, userID string) {

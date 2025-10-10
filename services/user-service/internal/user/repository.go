@@ -8,8 +8,9 @@ import (
 	"gorm.io/gorm"
 )
 
-type ShardedDB interface {
-	Get(shardID int) *gorm.DB
+type ShardPicker interface {
+	Pick(shardID int) *gorm.DB
+	ForcePrimary(shardID int) *gorm.DB
 }
 
 type IUserRepository interface {
@@ -21,15 +22,16 @@ type IUserRepository interface {
 }
 
 type UserRepository struct {
-	mdb ShardedDB
+	db ShardPicker
 }
 
-func NewUserRepository(mdb ShardedDB) IUserRepository {
-	return &UserRepository{mdb: mdb}
+func NewUserRepository(p ShardPicker) IUserRepository {
+	return &UserRepository{db: p}
 }
 
 func (r *UserRepository) Create(u *User) (*User, error) {
-	if err := r.mdb.Get(u.ShardID).Create(u).Error; err != nil {
+	// writes → primary
+	if err := r.db.ForcePrimary(u.ShardID).Create(u).Error; err != nil {
 		return nil, err
 	}
 	return u, nil
@@ -37,7 +39,8 @@ func (r *UserRepository) Create(u *User) (*User, error) {
 
 func (r *UserRepository) FindByEmail(email string, shardID int) (*User, error) {
 	var u User
-	if err := r.mdb.Get(shardID).Where("email = ?", email).First(&u).Error; err != nil {
+	// reads → replicas (via pgpool or direct)
+	if err := r.db.Pick(shardID).Where("email = ?", email).First(&u).Error; err != nil {
 		return nil, err
 	}
 	return &u, nil
@@ -49,7 +52,7 @@ func (r *UserRepository) FindByUserID(uid string) (*User, error) {
 		return nil, errors.New("invalid user_id format")
 	}
 	var u User
-	if err := r.mdb.Get(sh).Where("user_id = ?", uid).First(&u).Error; err != nil {
+	if err := r.db.Pick(sh).Where("user_id = ?", uid).First(&u).Error; err != nil {
 		return nil, err
 	}
 	return &u, nil
@@ -57,7 +60,7 @@ func (r *UserRepository) FindByUserID(uid string) (*User, error) {
 
 func (r *UserRepository) FindAllByShard(shardID int) ([]User, error) {
 	var users []User
-	if err := r.mdb.Get(shardID).Find(&users).Error; err != nil {
+	if err := r.db.Pick(shardID).Find(&users).Error; err != nil {
 		return nil, err
 	}
 	return users, nil
@@ -65,7 +68,7 @@ func (r *UserRepository) FindAllByShard(shardID int) ([]User, error) {
 
 func (r *UserRepository) FindAllByShardPaged(shardID, limit, offset int) ([]User, error) {
 	var users []User
-	if err := r.mdb.Get(shardID).
+	if err := r.db.Pick(shardID).
 		Order("created_at DESC").
 		Limit(limit).Offset(offset).
 		Find(&users).Error; err != nil {

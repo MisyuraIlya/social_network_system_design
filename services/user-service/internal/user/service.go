@@ -9,6 +9,8 @@ import (
 	"strconv"
 
 	"users-service/pkg/shard"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 type IUserService interface {
@@ -47,11 +49,16 @@ func (s *UserService) Register(email, password, name string) (*User, error) {
 	_, _ = rand.Read(b[:])
 	uid := fmt.Sprintf("%d-%x", sh, binary.BigEndian.Uint64(b[:]))
 
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, errors.New("failed to hash password")
+	}
+
 	u := &User{
 		UserID:   uid,
 		ShardID:  sh,
 		Email:    email,
-		Password: password, // TODO: bcrypt
+		Password: string(hash),
 		Name:     name,
 	}
 	return s.repo.Create(u)
@@ -60,7 +67,10 @@ func (s *UserService) Register(email, password, name string) (*User, error) {
 func (s *UserService) Login(email, password string) (*User, error) {
 	sh := shard.PickShard(email, s.numShards)
 	usr, err := s.repo.FindByEmail(email, sh)
-	if err != nil || usr.Password != password {
+	if err != nil {
+		return nil, errors.New("wrong credentials")
+	}
+	if bcrypt.CompareHashAndPassword([]byte(usr.Password), []byte(password)) != nil {
 		return nil, errors.New("wrong credentials")
 	}
 	return usr, nil

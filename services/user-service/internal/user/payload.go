@@ -21,4 +21,5 @@ type LoginResponse struct {
 	UserID  string `json:"user_id"`
 	Email   string `json:"email"`
 	Message string `json:"message"`
+	Name    string `json:"name"`
 }
