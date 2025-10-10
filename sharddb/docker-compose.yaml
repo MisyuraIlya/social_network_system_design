@@ -1,0 +1,141 @@
+# docker-compose.yml
+networks:
+  db-net:
+
+volumes:
+  shard1-primary-data:
+  shard1-replica1-data:
+  shard2-primary-data:
+  shard2-replica1-data:
+  pgadmin-data:
+
+services:
+  # =========================
+  # SHARD 1
+  # =========================
+  shard1-primary:
+    image: bitnami/postgresql:latest
+    container_name: shard1-primary
+    restart: unless-stopped
+    environment:
+      # App user/db
+      - POSTGRESQL_USERNAME=app
+      - POSTGRESQL_PASSWORD=app_pass_shard1
+      - POSTGRESQL_DATABASE=appdb
+      # Superuser
+      - POSTGRESQL_POSTGRES_PASSWORD=postgres_pass_shard1
+      # Replication (old naming scheme)
+      - POSTGRESQL_REPLICATION_MODE=master
+      - POSTGRESQL_REPLICATION_USER=repl
+      - POSTGRESQL_REPLICATION_PASSWORD=repl_pass
+    ports:
+      - "5433:5432"   # shard1 primary on host 5433
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-d", "appdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - shard1-primary-data:/bitnami/postgresql
+    networks: [db-net]
+
+  shard1-replica1:
+    image: bitnami/postgresql:latest
+    container_name: shard1-replica1
+    restart: unless-stopped
+    depends_on: [shard1-primary]
+    environment:
+      - POSTGRESQL_REPLICATION_MODE=slave
+      - POSTGRESQL_MASTER_HOST=shard1-primary
+      - POSTGRESQL_MASTER_PORT_NUMBER=5432
+      - POSTGRESQL_REPLICATION_USER=repl
+      - POSTGRESQL_REPLICATION_PASSWORD=repl_pass
+      # Local superuser for the replica container
+      - POSTGRESQL_POSTGRES_PASSWORD=postgres_pass_shard1
+      # App creds (match primary)
+      - POSTGRESQL_USERNAME=app
+      - POSTGRESQL_PASSWORD=app_pass_shard1
+      - POSTGRESQL_DATABASE=appdb
+    ports:
+      - "5435:5432"   # shard1 replica on host 5435
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-d", "appdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - shard1-replica1-data:/bitnami/postgresql
+    networks: [db-net]
+
+  # =========================
+  # SHARD 2
+  # =========================
+  shard2-primary:
+    image: bitnami/postgresql:latest
+    container_name: shard2-primary
+    restart: unless-stopped
+    environment:
+      - POSTGRESQL_USERNAME=app
+      - POSTGRESQL_PASSWORD=app_pass_shard2
+      - POSTGRESQL_DATABASE=appdb
+      - POSTGRESQL_POSTGRES_PASSWORD=postgres_pass_shard2
+      - POSTGRESQL_REPLICATION_MODE=master
+      - POSTGRESQL_REPLICATION_USER=repl
+      - POSTGRESQL_REPLICATION_PASSWORD=repl_pass
+    ports:
+      - "5434:5432"   # shard2 primary on host 5434
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-d", "appdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - shard2-primary-data:/bitnami/postgresql
+    networks: [db-net]
+
+  shard2-replica1:
+    image: bitnami/postgresql:latest
+    container_name: shard2-replica1
+    restart: unless-stopped
+    depends_on: [shard2-primary]
+    environment:
+      - POSTGRESQL_REPLICATION_MODE=slave
+      - POSTGRESQL_MASTER_HOST=shard2-primary
+      - POSTGRESQL_MASTER_PORT_NUMBER=5432
+      - POSTGRESQL_REPLICATION_USER=repl
+      - POSTGRESQL_REPLICATION_PASSWORD=repl_pass
+      - POSTGRESQL_POSTGRES_PASSWORD=postgres_pass_shard2
+      - POSTGRESQL_USERNAME=app
+      - POSTGRESQL_PASSWORD=app_pass_shard2
+      - POSTGRESQL_DATABASE=appdb
+    ports:
+      - "5436:5432"   # shard2 replica on host 5436
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-d", "appdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - shard2-replica1-data:/bitnami/postgresql
+    networks: [db-net]
+
+  # =========================
+  # PGADMIN
+  # =========================
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: pgadmin
+    restart: unless-stopped
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=admin@local
+      - PGADMIN_DEFAULT_PASSWORD=admin
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin-data:/var/lib/pgadmin
+    depends_on:
+      - shard1-primary
+      - shard1-replica1
+      - shard2-primary
+      - shard2-replica1
+    networks: [db-net]
