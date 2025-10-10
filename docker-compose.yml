@@ -37,7 +37,7 @@ services:
     networks:
       socialnet: {}
     ports:
-      - "15432:5432"   # admin/debug access to node 0
+      - "15432:5432"
 
   shard1-pg-1:
     platform: linux/amd64
@@ -71,7 +71,7 @@ services:
     networks:
       socialnet: {}
     ports:
-      - "15433:5432"   # admin/debug access to node 1
+      - "15433:5432"
 
   shard1-pg-2:
     platform: linux/amd64
@@ -105,7 +105,7 @@ services:
     networks:
       socialnet: {}
     ports:
-      - "15434:5432"   # admin/debug access to node 2
+      - "15434:5432"
 
   shard1-pgpool:
     platform: linux/amd64
@@ -126,21 +126,15 @@ services:
       - PGPOOL_POSTGRES_USERNAME=app
       - PGPOOL_POSTGRES_PASSWORD=app_pass_shard1
       - PGPOOL_ENABLE_LOAD_BALANCING=yes
-      # REQUIRED by Bitnami image:
       - PGPOOL_ADMIN_USERNAME=admin
       - PGPOOL_ADMIN_PASSWORD=adminpass
     healthcheck:
-      # Ensure bash for /dev/tcp
       test: ["CMD-SHELL", "bash -lc '</dev/tcp/127.0.0.1/5432' || exit 1"]
-      interval: 10s
-      timeout: 3s
-      retries: 30
     networks:
       socialnet:
-        aliases:
-          - shard1-pgpool
+        aliases: [shard1-pgpool]
     ports:
-      - "6433:5432"    # EXPOSED: client entrypoint for Shard 1
+      - "6433:5432"
 
   # =========================
   # USERS DB – SHARD 2 (repmgr)
@@ -167,15 +161,12 @@ services:
       - REPMGR_PRIMARY_ROLE_WAIT=false
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U app -d appdb"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
     volumes:
       - shard2-pg-0-data:/bitnami/postgresql
     networks:
       socialnet: {}
     ports:
-      - "25432:5432"   # admin/debug access to node 0
+      - "25432:5432"
 
   shard2-pg-1:
     platform: linux/amd64
@@ -201,15 +192,12 @@ services:
       - REPMGR_DATABASE=repmgr
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U app -d appdb"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
     volumes:
       - shard2-pg-1-data:/bitnami/postgresql
     networks:
       socialnet: {}
     ports:
-      - "25433:5432"   # admin/debug access to node 1
+      - "25433:5432"
 
   shard2-pg-2:
     platform: linux/amd64
@@ -235,15 +223,12 @@ services:
       - REPMGR_DATABASE=repmgr
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U app -d appdb"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
     volumes:
       - shard2-pg-2-data:/bitnami/postgresql
     networks:
       socialnet: {}
     ports:
-      - "25434:5432"   # admin/debug access to node 2
+      - "25434:5432"
 
   shard2-pgpool:
     platform: linux/amd64
@@ -264,20 +249,15 @@ services:
       - PGPOOL_POSTGRES_USERNAME=app
       - PGPOOL_POSTGRES_PASSWORD=app_pass_shard2
       - PGPOOL_ENABLE_LOAD_BALANCING=yes
-      # REQUIRED by Bitnami image:
       - PGPOOL_ADMIN_USERNAME=admin
       - PGPOOL_ADMIN_PASSWORD=adminpass
     healthcheck:
       test: ["CMD-SHELL", "bash -lc '</dev/tcp/127.0.0.1/5432' || exit 1"]
-      interval: 10s
-      timeout: 3s
-      retries: 30
     networks:
       socialnet:
-        aliases:
-          - shard2-pgpool
+        aliases: [shard2-pgpool]
     ports:
-      - "7433:5432"    # EXPOSED: client entrypoint for Shard 2
+      - "7433:5432"
 
   # -------------------------
   # OTHER Postgres DBs
@@ -295,9 +275,6 @@ services:
       socialnet: {}
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U post -d post_db"]
-      interval: 5s
-      timeout: 3s
-      retries: 30
     ports:
       - "5434:5432"
 
@@ -314,9 +291,6 @@ services:
       socialnet: {}
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U feedback -d feedback_db"]
-      interval: 5s
-      timeout: 3s
-      retries: 30
     ports:
       - "5435:5432"
 
@@ -333,9 +307,6 @@ services:
       socialnet: {}
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U notify -d message_db"]
-      interval: 5s
-      timeout: 3s
-      retries: 30
     ports:
       - "5436:5432"
 
@@ -352,9 +323,6 @@ services:
       socialnet: {}
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 30
 
   redis-message:
     image: redis:7
@@ -366,9 +334,6 @@ services:
       socialnet: {}
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 30
 
   redis-feedback:
     image: redis:7
@@ -380,9 +345,6 @@ services:
       socialnet: {}
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 30
 
   kafka:
     image: confluentinc/cp-kafka:7.7.1
@@ -432,9 +394,6 @@ services:
       socialnet: {}
     healthcheck:
       test: ["CMD-SHELL", "curl -s http://localhost:9000/minio/health/ready || exit 1"]
-      interval: 5s
-      timeout: 3s
-      retries: 30
 
   #################################################################
   #                       USER SERVICE (N SHARDS)                 #
@@ -465,11 +424,18 @@ services:
       AUTO_MIGRATE: "true"
       AIR_WATCHER_FORCE_POLLING: "true"
       AIR_TMP_DIR: "/app/tmp"
+      # OpenTelemetry
+      OTEL_EXPORTER_OTLP_ENDPOINT: "otel-collector:4318"
+      OTEL_TRACES_SAMPLER: "parentbased_traceidratio"
+      OTEL_TRACES_SAMPLER_ARG: "1.0"
+      OTEL_RESOURCE_ATTRIBUTES: "service.name=user-service,service.version=1.0.0,env=local"
     depends_on:
       shard1-pgpool:
         condition: service_healthy
       shard2-pgpool:
         condition: service_healthy
+      otel-collector:
+        condition: service_started
     networks:
       socialnet: {}
     ports:
@@ -653,6 +619,116 @@ services:
     networks:
       socialnet: {}
 
+  #################################################################
+  #                        OBSERVABILITY                          #
+  #################################################################
+  otel-collector:
+    image: otel/opentelemetry-collector:0.106.0
+    container_name: otel-collector
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./observability/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+    networks:
+      socialnet: {}
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.59
+    container_name: jaeger
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - "16686:16686"
+      - "14250:14250"
+      - "14268:14268"
+    networks:
+      socialnet: {}
+
+  loki:
+    image: grafana/loki:2.9.8
+    container_name: loki
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+    volumes:
+      - ./observability/loki-config.yaml:/etc/loki/local-config.yaml:ro
+      - loki_data:/loki
+    ports:
+      - "3100:3100"
+    networks:
+      socialnet: {}
+
+  promtail:
+    image: grafana/promtail:2.9.8
+    container_name: promtail
+    command: ["-config.file=/etc/promtail/config.yml"]
+    volumes:
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./observability/promtail-config.yml:/etc/promtail/config.yml:ro
+    networks:
+      socialnet: {}
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    container_name: prometheus
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=15d"
+    ports:
+      - "9090:9090"
+    networks:
+      socialnet: {}
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_DEFAULT_THEME=light
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./observability/grafana-datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - ./observability/grafana-dashboards.yaml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
+      - ./observability/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+      - loki
+    networks:
+      socialnet: {}
+
+  postgres-exporter-shard1:
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.15.0
+    container_name: postgres-exporter-shard1
+    environment:
+      DATA_SOURCE_NAME: "postgresql://app:app_pass_shard1@shard1-pgpool:5432/appdb?sslmode=disable"
+    ports: ["9187:9187"]
+    networks: { socialnet: {} }
+    depends_on: { shard1-pgpool: { condition: service_healthy } }
+
+  postgres-exporter-shard2:
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.15.0
+    container_name: postgres-exporter-shard2
+    environment:
+      DATA_SOURCE_NAME: "postgresql://app:app_pass_shard2@shard2-pgpool:5432/appdb?sslmode=disable"
+    ports: ["9188:9187"]
+    networks: { socialnet: {} }
+    depends_on: { shard2-pgpool: { condition: service_healthy } }
+
+  redis-exporter-feed:
+    image: oliver006/redis_exporter:v1.62.0
+    container_name: redis-exporter-feed
+    command: ["--redis.addr=redis-feed:6379"]
+    ports: ["9121:9121"]
+    networks: { socialnet: {} }
+    depends_on: { redis-feed: { condition: service_healthy } }
+
 networks:
   socialnet:
 
@@ -680,3 +756,8 @@ volumes:
 
   # Kafka
   kafka_data:
+
+  # Observability
+  loki_data:
+  prometheus_data:
+  grafana_data:

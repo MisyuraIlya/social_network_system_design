@@ -35,7 +35,8 @@ services:
       retries: 12
     volumes:
       - shard1-pg-0-data:/bitnami/postgresql
-    networks: [socialnet]
+    networks:
+      socialnet: {}
     ports:
       - "15432:5432"   # admin/debug access to node 0
 
@@ -44,7 +45,9 @@ services:
     image: public.ecr.aws/bitnami/postgresql-repmgr:latest
     container_name: shard1-pg-1
     restart: unless-stopped
-    depends_on: [shard1-pg-0]
+    depends_on:
+      shard1-pg-0:
+        condition: service_started
     environment:
       - POSTGRESQL_USERNAME=app
       - POSTGRESQL_PASSWORD=app_pass_shard1
@@ -66,7 +69,8 @@ services:
       retries: 12
     volumes:
       - shard1-pg-1-data:/bitnami/postgresql
-    networks: [socialnet]
+    networks:
+      socialnet: {}
     ports:
       - "15433:5432"   # admin/debug access to node 1
 
@@ -75,7 +79,9 @@ services:
     image: public.ecr.aws/bitnami/postgresql-repmgr:latest
     container_name: shard1-pg-2
     restart: unless-stopped
-    depends_on: [shard1-pg-0]
+    depends_on:
+      shard1-pg-0:
+        condition: service_started
     environment:
       - POSTGRESQL_USERNAME=app
       - POSTGRESQL_PASSWORD=app_pass_shard1
@@ -97,7 +103,8 @@ services:
       retries: 12
     volumes:
       - shard1-pg-2-data:/bitnami/postgresql
-    networks: [socialnet]
+    networks:
+      socialnet: {}
     ports:
       - "15434:5432"   # admin/debug access to node 2
 
@@ -107,9 +114,12 @@ services:
     container_name: shard1-pgpool
     restart: unless-stopped
     depends_on:
-      - shard1-pg-0
-      - shard1-pg-1
-      - shard1-pg-2
+      shard1-pg-0:
+        condition: service_healthy
+      shard1-pg-1:
+        condition: service_healthy
+      shard1-pg-2:
+        condition: service_healthy
     environment:
       - PGPOOL_BACKEND_NODES=0:shard1-pg-0:5432,1:shard1-pg-1:5432,2:shard1-pg-2:5432
       - PGPOOL_SR_CHECK_USER=repl
@@ -117,12 +127,19 @@ services:
       - PGPOOL_POSTGRES_USERNAME=app
       - PGPOOL_POSTGRES_PASSWORD=app_pass_shard1
       - PGPOOL_ENABLE_LOAD_BALANCING=yes
+      # REQUIRED by Bitnami image:
+      - PGPOOL_ADMIN_USERNAME=admin
+      - PGPOOL_ADMIN_PASSWORD=adminpass
     healthcheck:
-      test: ["CMD-SHELL", "</dev/tcp/127.0.0.1/5432"]
-      interval: 15s
+      # Ensure bash for /dev/tcp
+      test: ["CMD-SHELL", "bash -lc '</dev/tcp/127.0.0.1/5432' || exit 1"]
+      interval: 10s
       timeout: 3s
-      retries: 10
-    networks: [socialnet]
+      retries: 30
+    networks:
+      socialnet:
+        aliases:
+          - shard1-pgpool
     ports:
       - "6433:5432"    # EXPOSED: client entrypoint for Shard 1
 
@@ -156,7 +173,8 @@ services:
       retries: 12
     volumes:
       - shard2-pg-0-data:/bitnami/postgresql
-    networks: [socialnet]
+    networks:
+      socialnet: {}
     ports:
       - "25432:5432"   # admin/debug access to node 0
 
@@ -165,7 +183,9 @@ services:
     image: public.ecr.aws/bitnami/postgresql-repmgr:latest
     container_name: shard2-pg-1
     restart: unless-stopped
-    depends_on: [shard2-pg-0]
+    depends_on:
+      shard2-pg-0:
+        condition: service_started
     environment:
       - POSTGRESQL_USERNAME=app
       - POSTGRESQL_PASSWORD=app_pass_shard2
@@ -187,7 +207,8 @@ services:
       retries: 12
     volumes:
       - shard2-pg-1-data:/bitnami/postgresql
-    networks: [socialnet]
+    networks:
+      socialnet: {}
     ports:
       - "25433:5432"   # admin/debug access to node 1
 
@@ -196,7 +217,9 @@ services:
     image: public.ecr.aws/bitnami/postgresql-repmgr:latest
     container_name: shard2-pg-2
     restart: unless-stopped
-    depends_on: [shard2-pg-0]
+    depends_on:
+      shard2-pg-0:
+        condition: service_started
     environment:
       - POSTGRESQL_USERNAME=app
       - POSTGRESQL_PASSWORD=app_pass_shard2
@@ -218,7 +241,8 @@ services:
       retries: 12
     volumes:
       - shard2-pg-2-data:/bitnami/postgresql
-    networks: [socialnet]
+    networks:
+      socialnet: {}
     ports:
       - "25434:5432"   # admin/debug access to node 2
 
@@ -228,9 +252,12 @@ services:
     container_name: shard2-pgpool
     restart: unless-stopped
     depends_on:
-      - shard2-pg-0
-      - shard2-pg-1
-      - shard2-pg-2
+      shard2-pg-0:
+        condition: service_healthy
+      shard2-pg-1:
+        condition: service_healthy
+      shard2-pg-2:
+        condition: service_healthy
     environment:
       - PGPOOL_BACKEND_NODES=0:shard2-pg-0:5432,1:shard2-pg-1:5432,2:shard2-pg-2:5432
       - PGPOOL_SR_CHECK_USER=repl
@@ -238,12 +265,18 @@ services:
       - PGPOOL_POSTGRES_USERNAME=app
       - PGPOOL_POSTGRES_PASSWORD=app_pass_shard2
       - PGPOOL_ENABLE_LOAD_BALANCING=yes
+      # REQUIRED by Bitnami image:
+      - PGPOOL_ADMIN_USERNAME=admin
+      - PGPOOL_ADMIN_PASSWORD=adminpass
     healthcheck:
-      test: ["CMD-SHELL", "</dev/tcp/127.0.0.1/5432"]
-      interval: 15s
+      test: ["CMD-SHELL", "bash -lc '</dev/tcp/127.0.0.1/5432' || exit 1"]
+      interval: 10s
       timeout: 3s
-      retries: 10
-    networks: [socialnet]
+      retries: 30
+    networks:
+      socialnet:
+        aliases:
+          - shard2-pgpool
     ports:
       - "7433:5432"    # EXPOSED: client entrypoint for Shard 2
 
@@ -259,7 +292,8 @@ services:
       POSTGRES_DB: post_db
     volumes:
       - post_db_data:/var/lib/postgresql/data
-    networks: [socialnet]
+    networks:
+      socialnet: {}
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U post -d post_db"]
       interval: 5s
@@ -277,7 +311,8 @@ services:
       POSTGRES_DB: feedback_db
     volumes:
       - feedback_db_data:/var/lib/postgresql/data
-    networks: [socialnet]
+    networks:
+      socialnet: {}
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U feedback -d feedback_db"]
       interval: 5s
@@ -295,7 +330,8 @@ services:
       POSTGRES_DB: message_db
     volumes:
       - message_db_data:/var/lib/postgresql/data
-    networks: [socialnet]
+    networks:
+      socialnet: {}
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U notify -d message_db"]
       interval: 5s
@@ -313,7 +349,8 @@ services:
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis_feed_data:/data
-    networks: [socialnet]
+    networks:
+      socialnet: {}
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -326,7 +363,8 @@ services:
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis_message_data:/data
-    networks: [socialnet]
+    networks:
+      socialnet: {}
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -339,7 +377,8 @@ services:
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis_feedback_data:/data
-    networks: [socialnet]
+    networks:
+      socialnet: {}
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -364,7 +403,8 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
       CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
-    networks: [socialnet]
+    networks:
+      socialnet: {}
     volumes:
       - kafka_data:/var/lib/kafka/data
     healthcheck:
@@ -389,7 +429,8 @@ services:
       - "9001:9001"
     volumes:
       - minio_data:/data
-    networks: [socialnet]
+    networks:
+      socialnet: {}
     healthcheck:
       test: ["CMD-SHELL", "curl -s http://localhost:9000/minio/health/ready || exit 1"]
       interval: 5s
@@ -410,17 +451,28 @@ services:
       NUM_SHARDS: "2"
       SHARDS_JSON: >
         [
-          {"id":0,"dsn":"host=shard1-pgpool port=5432 user=app password=app_pass_shard1 dbname=appdb sslmode=disable"},
-          {"id":1,"dsn":"host=shard2-pgpool port=5432 user=app password=app_pass_shard2 dbname=appdb sslmode=disable"}
+          {"id":0,
+          "writer":"host=shard1-pgpool port=5432 user=app password=app_pass_shard1 dbname=appdb sslmode=disable",
+          "readers":[
+            "host=shard1-pgpool port=5432 user=app password=app_pass_shard1 dbname=appdb sslmode=disable"
+          ]},
+          {"id":1,
+          "writer":"host=shard2-pgpool port=5432 user=app password=app_pass_shard2 dbname=appdb sslmode=disable",
+          "readers":[
+            "host=shard2-pgpool port=5432 user=app password=app_pass_shard2 dbname=appdb sslmode=disable"
+          ]}
         ]
+      JWT_SECRET: "super-long-random-secret"
+      AUTO_MIGRATE: "true"
       AIR_WATCHER_FORCE_POLLING: "true"
       AIR_TMP_DIR: "/app/tmp"
     depends_on:
       shard1-pgpool:
-        condition: service_started
+        condition: service_healthy
       shard2-pgpool:
-        condition: service_started
-    networks: [socialnet]
+        condition: service_healthy
+    networks:
+      socialnet: {}
     ports:
       - "8081:8081"
 
@@ -444,7 +496,8 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
-    networks: [socialnet]
+    networks:
+      socialnet: {}
     ports:
       - "8082:8082"
 
@@ -462,7 +515,8 @@ services:
         condition: service_healthy
       kafka:
         condition: service_healthy
-    networks: [socialnet]
+    networks:
+      socialnet: {}
     ports:
       - "8083:8083"
 
@@ -481,7 +535,8 @@ services:
         condition: service_healthy
       redis-feedback:
         condition: service_healthy
-    networks: [socialnet]
+    networks:
+      socialnet: {}
     ports:
       - "8084:8084"
 
@@ -503,7 +558,8 @@ services:
         condition: service_healthy
       redis-message:
         condition: service_healthy
-    networks: [socialnet]
+    networks:
+      socialnet: {}
     ports:
       - "8085:8085"
 
@@ -515,7 +571,8 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
-    networks: [socialnet]
+    networks:
+      socialnet: {}
     ports:
       - "8086:8086"
 
@@ -529,7 +586,8 @@ services:
     depends_on:
       minio:
         condition: service_healthy
-    networks: [socialnet]
+    networks:
+      socialnet: {}
     ports:
       - "8088:8088"
 
@@ -545,7 +603,8 @@ services:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
     ports:
       - "80:80"
-    networks: [socialnet]
+    networks:
+      socialnet: {}
 
   api-gateway:
     container_name: api-gateway
@@ -573,7 +632,8 @@ services:
         condition: service_started
       notification-service:
         condition: service_started
-    networks: [socialnet]
+    networks:
+      socialnet: {}
     ports:
       - "8080:8080"
 
@@ -591,7 +651,8 @@ services:
       SWAGGER_JSON: /openapi/combined_openapi.yaml
     volumes:
       - ./combined_openapi.yaml:/openapi/combined_openapi.yaml:ro
-    networks: [socialnet]
+    networks:
+      socialnet: {}
 
 networks:
   socialnet:
@@ -631,38 +692,55 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"strconv"
 
 	"users-service/internal/user"
-	multidb "users-service/pkg/db"
+	"users-service/pkg/db"
 
 	"gorm.io/gorm"
 )
 
-func main() {
-	// Open all shard connections from SHARDS_JSON
-	mdb := multidb.OpenMultiFromEnv()
+type ShardPicker interface {
+	Pick(shardID int) *gorm.DB
+	ForcePrimary(shardID int) *gorm.DB
+}
 
-	// Auto-migrate the users table on every shard
-	if err := mdb.Range(func(id int, db *gorm.DB) error {
-		return db.AutoMigrate(&user.User{})
-	}); err != nil {
-		log.Fatalf("migration failed: %v", err)
+func main() {
+	store := db.OpenFromEnv()
+
+	if os.Getenv("AUTO_MIGRATE") == "true" {
+		numShards := mustAtoi(os.Getenv("NUM_SHARDS"))
+		for i := 0; i < numShards; i++ {
+			if err := store.ForcePrimary(i).AutoMigrate(&user.User{}); err != nil {
+				log.Fatalf("migration failed on shard %d: %v", i, err)
+			}
+		}
 	}
 
-	// Wire repository/service/handler
-	repo := user.NewUserRepository(mdb) // multi-shard aware
-	svc := user.NewUserService(repo)    // picks shard per request
-	handler := user.NewUserHandler(svc) // HTTP
+	repo := user.NewUserRepository(store)
+	svc := user.NewUserService(repo)
+	handler := user.NewUserHandler(svc)
 
 	mux := http.NewServeMux()
 	user.RegisterRoutes(mux, handler)
 
-	addr := ":8081"
-	fmt.Printf("User Service listening on %s\n", addr)
-	if err := http.ListenAndServe(addr, mux); err != nil {
-		log.Fatalf("Server failed: %v\n", err)
+	addr := os.Getenv("APP_PORT")
+	if addr == "" {
+		addr = ":8081"
 	}
+	fmt.Printf("User Service listening on %s\n", addr)
+	log.Fatal(http.ListenAndServe(addr, mux))
 }
+
+func mustAtoi(s string) int {
+	n, _ := strconv.Atoi(s)
+	if n <= 0 {
+		n = 1
+	}
+	return n
+}
+
 services/user-service/configs/config.go
 package configs
 
@@ -688,73 +766,134 @@ func LoadConfig() *Config {
 	}
 }
 
-services/user-service/pkg/db/multi.go
+services/user-service/pkg/db/db.go
 package db
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
 	"os"
-	"sync"
+	"time"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
+	"gorm.io/plugin/dbresolver"
 )
 
 type ShardCfg struct {
-	ID  int    `json:"id"`
-	DSN string `json:"dsn"`
+	ID      int      `json:"id"`
+	Writer  string   `json:"writer"`
+	Readers []string `json:"readers,omitempty"`
 }
 
-type Multi struct {
-	dbs map[int]*gorm.DB
-	mu  sync.RWMutex
+type DB struct {
+	Base *gorm.DB
 }
 
-func OpenMultiFromEnv() *Multi {
+func OpenFromEnv() *DB {
 	raw := os.Getenv("SHARDS_JSON")
 	if raw == "" {
-		log.Fatal("SHARDS_JSON is required (JSON array of {id, dsn})")
+		log.Fatal("SHARDS_JSON is required (JSON array of {id, writer, readers[]})")
 	}
+
 	var shards []ShardCfg
-	if err := json.Unmarshal([]byte(raw), &shards); err != nil {
+	if err := json.Unmarshal([]byte(raw), &shards); err != nil || len(shards) == 0 {
 		log.Fatalf("invalid SHARDS_JSON: %v", err)
 	}
-	if len(shards) == 0 {
-		log.Fatal("SHARDS_JSON is empty")
+
+	base, err := openWithRetry(shards[0].Writer, 8, 2*time.Second)
+	if err != nil {
+		log.Fatalf("open base db failed: %v", err)
 	}
 
-	m := &Multi{dbs: make(map[int]*gorm.DB)}
-	for _, s := range shards {
-		db, err := gorm.Open(postgres.Open(s.DSN), &gorm.Config{})
-		if err != nil {
-			log.Fatalf("failed to connect shard %d: %v", s.ID, err)
+	sqlDB, _ := base.DB()
+	sqlDB.SetMaxOpenConns(40)
+	sqlDB.SetMaxIdleConns(10)
+	sqlDB.SetConnMaxLifetime(30 * time.Minute)
+
+	makeCfg := func(s ShardCfg) dbresolver.Config {
+		var readers []gorm.Dialector
+		for _, r := range s.Readers {
+			readers = append(readers, postgres.Open(r))
 		}
-		m.dbs[s.ID] = db
-	}
-	return m
-}
-
-func (m *Multi) Get(shardID int) *gorm.DB {
-	m.mu.RLock()
-	db := m.dbs[shardID]
-	m.mu.RUnlock()
-	if db == nil {
-		panic(fmt.Sprintf("no db for shard %d", shardID))
-	}
-	return db
-}
-
-func (m *Multi) Range(fn func(id int, db *gorm.DB) error) error {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	for id, db := range m.dbs {
-		if err := fn(id, db); err != nil {
-			return err
+		return dbresolver.Config{
+			Sources:  []gorm.Dialector{postgres.Open(s.Writer)},
+			Replicas: readers,
+			Policy:   dbresolver.RandomPolicy{},
 		}
 	}
-	return nil
+
+	first := shards[0]
+	firstLabel := fmt.Sprintf("shard%d", first.ID)
+	resolver := dbresolver.Register(makeCfg(first), firstLabel)
+
+	for _, s := range shards[1:] {
+		label := fmt.Sprintf("shard%d", s.ID)
+		resolver = resolver.Register(makeCfg(s), label)
+	}
+
+	if err := base.Use(resolver); err != nil {
+		log.Fatalf("dbresolver use failed: %v", err)
+	}
+
+	return &DB{Base: base}
+}
+
+func (d *DB) Pick(shardID int) *gorm.DB {
+	return d.Base.Clauses(dbresolver.Use(fmt.Sprintf("shard%d", shardID)))
+}
+
+func (d *DB) ForcePrimary(shardID int) *gorm.DB {
+	return d.Base.Clauses(
+		dbresolver.Use(fmt.Sprintf("shard%d", shardID)),
+		dbresolver.Write,
+	)
+}
+
+func openWithRetry(dsn string, attempts int, sleep time.Duration) (*gorm.DB, error) {
+	var last error
+	for i := 1; i <= attempts; i++ {
+		db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
+			Logger: logger.Default.LogMode(logger.Warn),
+		})
+		if err == nil {
+			sqlDB, err2 := db.DB()
+			if err2 == nil && sqlDB != nil {
+				pingErr := pingWithTimeout(sqlDB, 2*time.Second)
+				if pingErr == nil {
+					return db, nil
+				}
+				last = pingErr
+			} else {
+				last = err2
+			}
+		} else {
+			last = err
+		}
+
+		log.Printf("db open attempt %d/%d failed: %v", i, attempts, last)
+		time.Sleep(sleep)
+		if sleep < 8*time.Second {
+			sleep *= 2
+		}
+	}
+	return nil, last
+}
+
+func pingWithTimeout(sqlDB *sql.DB, timeout time.Duration) error {
+	done := make(chan error, 1)
+	go func() {
+		done <- sqlDB.Ping()
+	}()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(timeout):
+		return fmt.Errorf("db ping timeout after %s", timeout)
+	}
 }
 
 services/user-service/pkg/shard/shard.go
@@ -797,10 +936,7 @@ import (
 func Decode[T any](body io.ReadCloser) (T, error) {
 	var payload T
 	err := json.NewDecoder(body).Decode(&payload)
-	if err != nil {
-		return payload, err
-	}
-	return payload, nil
+	return payload, err
 }
 
 services/user-service/pkg/req/handle.go
@@ -814,12 +950,11 @@ import (
 func HandleBody[T any](w *http.ResponseWriter, r *http.Request) (*T, error) {
 	body, err := Decode[T](r.Body)
 	if err != nil {
-		res.Json(*w, err.Error(), 402)
+		res.Json(*w, map[string]any{"error": "invalid JSON"}, http.StatusBadRequest)
 		return nil, err
 	}
-	err = IsValid(body)
-	if err != nil {
-		res.Json(*w, err.Error(), 402)
+	if err = IsValid(body); err != nil {
+		res.Json(*w, map[string]any{"error": err.Error()}, http.StatusUnprocessableEntity)
 		return nil, err
 	}
 	return &body, nil
@@ -828,14 +963,11 @@ func HandleBody[T any](w *http.ResponseWriter, r *http.Request) (*T, error) {
 services/user-service/pkg/req/validate.go
 package req
 
-import (
-	"github.com/go-playground/validator/v10"
-)
+import "github.com/go-playground/validator/v10"
 
 func IsValid[T any](payload T) error {
 	validate := validator.New()
-	err := validate.Struct(payload)
-	return err
+	return validate.Struct(payload)
 }
 
 services/user-service/pkg/res/res.go
@@ -849,8 +981,9 @@ import (
 func Json(w http.ResponseWriter, data any, statusCode int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
-	json.NewEncoder(w).Encode(data)
+	_ = json.NewEncoder(w).Encode(data)
 }
+
 
 services/user-service/internal/user/handler.go
 package user
@@ -862,6 +995,8 @@ import (
 	"strings"
 
 	"users-service/internal/auth"
+	"users-service/pkg/req"
+	"users-service/pkg/res"
 )
 
 type UserHandler struct {
@@ -878,7 +1013,7 @@ func RegisterRoutes(mux *http.ServeMux, h *UserHandler) {
 		case http.MethodPost:
 			h.Register(w, r)
 		case http.MethodGet:
-			h.ListMine(w, r) // <-- lists only the caller's shard via JWT
+			h.ListMine(w, r) // lists only the caller's shard via JWT
 		default:
 			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		}
@@ -918,58 +1053,49 @@ func RegisterRoutes(mux *http.ServeMux, h *UserHandler) {
 }
 
 func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
-		Name     string `json:"name"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	body, err := req.HandleBody[RegisterRequest](&w, r)
+	if err != nil {
+		// HandleBody already wrote 400/422 JSON
 		return
 	}
 	u, err := h.Service.Register(body.Email, body.Password, body.Name)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusConflict)
+		res.Json(w, map[string]any{"error": err.Error()}, http.StatusConflict)
 		return
 	}
 
-	// issue a JWT on register as well (handy for immediate login)
+	// issue a JWT on register as well
 	tok, _ := auth.MakeJWT(u.UserID, u.ShardID)
 
 	w.Header().Set("X-Shard-ID", strconv.Itoa(u.ShardID)) // debug only
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]any{
+	res.Json(w, map[string]any{
 		"user_id":      u.UserID,
 		"email":        u.Email,
 		"name":         u.Name,
 		"access_token": tok,
-	})
+	}, http.StatusCreated)
 }
 
 func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	body, err := req.HandleBody[LoginRequest](&w, r)
+	if err != nil {
 		return
 	}
 	u, err := h.Service.Login(body.Email, body.Password)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
+		res.Json(w, map[string]any{"error": "unauthorized"}, http.StatusUnauthorized)
 		return
 	}
 	tok, _ := auth.MakeJWT(u.UserID, u.ShardID)
 
 	w.Header().Set("X-Shard-ID", strconv.Itoa(u.ShardID)) // debug only
-	json.NewEncoder(w).Encode(map[string]any{
+	res.Json(w, map[string]any{
 		"message":      "login successful",
 		"user_id":      u.UserID,
 		"name":         u.Name,
 		"email":        u.Email,
 		"access_token": tok,
-	})
+	}, http.StatusOK)
 }
 
 func (h *UserHandler) GetUser(w http.ResponseWriter, _ *http.Request, userID string) {
@@ -1054,7 +1180,7 @@ type User struct {
 	ShardID  int    `gorm:"index" json:"shard_id"`
 	ID       uint   `gorm:"primaryKey" json:"-"`
 	Email    string `gorm:"uniqueIndex;size:100" json:"email"`
-	Password string `gorm:"size:255" json:"-"`
+	Password string `gorm:"size:255" json:"-"` // bcrypt hash
 	Name     string `gorm:"size:100" json:"name"`
 
 	CreatedAt time.Time `json:"created_at"`
@@ -1085,6 +1211,7 @@ type LoginResponse struct {
 	UserID  string `json:"user_id"`
 	Email   string `json:"email"`
 	Message string `json:"message"`
+	Name    string `json:"name"`
 }
 
 services/user-service/internal/user/repository.go
@@ -1098,8 +1225,9 @@ import (
 	"gorm.io/gorm"
 )
 
-type ShardedDB interface {
-	Get(shardID int) *gorm.DB
+type ShardPicker interface {
+	Pick(shardID int) *gorm.DB
+	ForcePrimary(shardID int) *gorm.DB
 }
 
 type IUserRepository interface {
@@ -1111,15 +1239,16 @@ type IUserRepository interface {
 }
 
 type UserRepository struct {
-	mdb ShardedDB
+	db ShardPicker
 }
 
-func NewUserRepository(mdb ShardedDB) IUserRepository {
-	return &UserRepository{mdb: mdb}
+func NewUserRepository(p ShardPicker) IUserRepository {
+	return &UserRepository{db: p}
 }
 
 func (r *UserRepository) Create(u *User) (*User, error) {
-	if err := r.mdb.Get(u.ShardID).Create(u).Error; err != nil {
+	// writes → primary
+	if err := r.db.ForcePrimary(u.ShardID).Create(u).Error; err != nil {
 		return nil, err
 	}
 	return u, nil
@@ -1127,7 +1256,8 @@ func (r *UserRepository) Create(u *User) (*User, error) {
 
 func (r *UserRepository) FindByEmail(email string, shardID int) (*User, error) {
 	var u User
-	if err := r.mdb.Get(shardID).Where("email = ?", email).First(&u).Error; err != nil {
+	// reads → replicas (via pgpool or direct)
+	if err := r.db.Pick(shardID).Where("email = ?", email).First(&u).Error; err != nil {
 		return nil, err
 	}
 	return &u, nil
@@ -1139,7 +1269,7 @@ func (r *UserRepository) FindByUserID(uid string) (*User, error) {
 		return nil, errors.New("invalid user_id format")
 	}
 	var u User
-	if err := r.mdb.Get(sh).Where("user_id = ?", uid).First(&u).Error; err != nil {
+	if err := r.db.Pick(sh).Where("user_id = ?", uid).First(&u).Error; err != nil {
 		return nil, err
 	}
 	return &u, nil
@@ -1147,7 +1277,7 @@ func (r *UserRepository) FindByUserID(uid string) (*User, error) {
 
 func (r *UserRepository) FindAllByShard(shardID int) ([]User, error) {
 	var users []User
-	if err := r.mdb.Get(shardID).Find(&users).Error; err != nil {
+	if err := r.db.Pick(shardID).Find(&users).Error; err != nil {
 		return nil, err
 	}
 	return users, nil
@@ -1155,7 +1285,7 @@ func (r *UserRepository) FindAllByShard(shardID int) ([]User, error) {
 
 func (r *UserRepository) FindAllByShardPaged(shardID, limit, offset int) ([]User, error) {
 	var users []User
-	if err := r.mdb.Get(shardID).
+	if err := r.db.Pick(shardID).
 		Order("created_at DESC").
 		Limit(limit).Offset(offset).
 		Find(&users).Error; err != nil {
@@ -1176,6 +1306,8 @@ import (
 	"strconv"
 
 	"users-service/pkg/shard"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 type IUserService interface {
@@ -1214,11 +1346,16 @@ func (s *UserService) Register(email, password, name string) (*User, error) {
 	_, _ = rand.Read(b[:])
 	uid := fmt.Sprintf("%d-%x", sh, binary.BigEndian.Uint64(b[:]))
 
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, errors.New("failed to hash password")
+	}
+
 	u := &User{
 		UserID:   uid,
 		ShardID:  sh,
 		Email:    email,
-		Password: password, // TODO: bcrypt
+		Password: string(hash),
 		Name:     name,
 	}
 	return s.repo.Create(u)
@@ -1227,7 +1364,10 @@ func (s *UserService) Register(email, password, name string) (*User, error) {
 func (s *UserService) Login(email, password string) (*User, error) {
 	sh := shard.PickShard(email, s.numShards)
 	usr, err := s.repo.FindByEmail(email, sh)
-	if err != nil || usr.Password != password {
+	if err != nil {
+		return nil, errors.New("wrong credentials")
+	}
+	if bcrypt.CompareHashAndPassword([]byte(usr.Password), []byte(password)) != nil {
 		return nil, errors.New("wrong credentials")
 	}
 	return usr, nil
@@ -1256,13 +1396,21 @@ package auth
 
 import (
 	"errors"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 )
 
-var jwtKey = []byte("replace-this-with-a-strong-secret")
+func secret() []byte {
+	s := os.Getenv("JWT_SECRET")
+	if s == "" {
+		// dev fallback only; set JWT_SECRET in production
+		s = "replace-this-with-a-strong-secret"
+	}
+	return []byte(s)
+}
 
 func MakeJWT(userID string, shardID int) (string, error) {
 	claims := jwt.MapClaims{
@@ -1272,7 +1420,7 @@ func MakeJWT(userID string, shardID int) (string, error) {
 		"exp": time.Now().Add(24 * time.Hour).Unix(),
 	}
 	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return tok.SignedString(jwtKey)
+	return tok.SignedString(secret())
 }
 
 func ParseAuthHeader(authz string) (userID string, shardID int, err error) {
@@ -1281,7 +1429,7 @@ func ParseAuthHeader(authz string) (userID string, shardID int, err error) {
 	}
 	tokenStr := strings.TrimPrefix(authz, "Bearer ")
 	tok, err := jwt.Parse(tokenStr, func(t *jwt.Token) (any, error) {
-		return jwtKey, nil
+		return secret(), nil
 	})
 	if err != nil || !tok.Valid {
 		return "", 0, errors.New("invalid token")
@@ -1291,7 +1439,6 @@ func ParseAuthHeader(authz string) (userID string, shardID int, err error) {
 		return "", 0, errors.New("bad claims")
 	}
 	uid, _ := mc["sub"].(string)
-	// sh comes as float64 from JSON numbers
 	shf, ok := mc["sh"].(float64)
 	if !ok {
 		return "", 0, errors.New("missing shard claim")

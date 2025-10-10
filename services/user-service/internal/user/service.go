@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"strconv"
 
@@ -38,6 +39,7 @@ func NewUserService(repo IUserRepository) IUserService {
 
 func (s *UserService) Register(email, password, name string) (*User, error) {
 	sh := shard.PickShard(email, s.numShards)
+	log.Printf("[user-service] Register route -> picked shard=%d for email=%s", sh, email)
 
 	// ensure uniqueness on the owning shard
 	if existing, _ := s.repo.FindByEmail(email, sh); existing != nil {
@@ -66,6 +68,8 @@ func (s *UserService) Register(email, password, name string) (*User, error) {
 
 func (s *UserService) Login(email, password string) (*User, error) {
 	sh := shard.PickShard(email, s.numShards)
+	log.Printf("[user-service] Login route -> picked shard=%d for email=%s", sh, email)
+
 	usr, err := s.repo.FindByEmail(email, sh)
 	if err != nil {
 		return nil, errors.New("wrong credentials")
@@ -81,6 +85,10 @@ func (s *UserService) ListAll(shardID int) ([]User, error) {
 }
 
 func (s *UserService) GetByUserID(uid string) (*User, error) {
+	sh, ok := shard.ExtractShard(uid)
+	if ok {
+		log.Printf("[user-service] GetByUserID -> extracted shard=%d from user_id=%s", sh, uid)
+	}
 	return s.repo.FindByUserID(uid)
 }
 
@@ -91,5 +99,6 @@ func (s *UserService) ListShard(shardID, limit, offset int) ([]User, error) {
 	if offset < 0 {
 		offset = 0
 	}
+	log.Printf("[user-service] ListShard -> shard=%d limit=%d offset=%d", shardID, limit, offset)
 	return s.repo.FindAllByShardPaged(shardID, limit, offset)
 }

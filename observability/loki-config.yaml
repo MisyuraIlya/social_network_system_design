@@ -1,0 +1,68 @@
+# Single-node Loki for docker-compose (no Consul/Etcd, no auth)
+# - Uses memberlist for the ring
+# - Stores chunks & indexes on local filesystem
+# - Exposes HTTP on 0.0.0.0:3100 so your host and Grafana can reach it
+# - Disables multi-tenant auth for simplicity
+
+auth_enabled: false
+
+server:
+  http_listen_address: 0.0.0.0
+  http_listen_port: 3100
+  grpc_listen_port: 9095
+
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: memberlist
+
+# Memberlist-based ring for single node (no peers needed).
+memberlist:
+  join_members: []
+
+# Loki TSDB schema (local filesystem object store)
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: loki_index_
+        period: 24h
+
+# Reasonable local/dev limits
+limits_config:
+  ingestion_rate_mb: 8
+  ingestion_burst_size_mb: 16
+  per_stream_rate_limit: 3MB
+  per_stream_rate_limit_burst: 6MB
+  max_global_streams_per_user: 5000
+  max_cache_freshness_per_query: 10m
+
+query_scheduler:
+  max_outstanding_requests_per_tenant: 2048
+
+# Keep TSDB data from growing forever (7 days)
+table_manager:
+  retention_deletes_enabled: true
+  retention_period: 168h  # 7 days
+
+# Local ruler storage (optional; safe defaults)
+ruler:
+  rule_path: /loki/rules
+  storage:
+    type: local
+    local:
+      directory: /loki/rules
+
+# Disable analytics/telemetry
+analytics:
+  reporting_enabled: false

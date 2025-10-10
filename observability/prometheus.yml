@@ -1,0 +1,45 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs: [{ targets: ["prometheus:9090"] }]
+
+  - job_name: user-service
+    metrics_path: /metrics
+    static_configs: [{ targets: ["user-service:8081"] }]
+
+  - job_name: post-service
+    metrics_path: /metrics
+    static_configs: [{ targets: ["post-service:8082"] }]
+
+  - job_name: feed-service
+    metrics_path: /metrics
+    static_configs: [{ targets: ["feed-service:8083"] }]
+
+  - job_name: feedback-service
+    metrics_path: /metrics
+    static_configs: [{ targets: ["feedback-service:8084"] }]
+
+  - job_name: message-service
+    metrics_path: /metrics
+    static_configs: [{ targets: ["message-service:8085"] }]
+
+  - job_name: notification-service
+    metrics_path: /metrics
+    static_configs: [{ targets: ["notification-service:8086"] }]
+
+  - job_name: media-service
+    metrics_path: /metrics
+    static_configs: [{ targets: ["media-service:8088"] }]
+
+  # Exporters
+  - job_name: postgres-shard1
+    static_configs: [{ targets: ["postgres-exporter-shard1:9187"] }]
+
+  - job_name: postgres-shard2
+    static_configs: [{ targets: ["postgres-exporter-shard2:9187"] }]
+
+  - job_name: redis-feed
+    static_configs: [{ targets: ["redis-exporter-feed:9121"] }]

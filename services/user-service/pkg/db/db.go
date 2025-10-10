@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"regexp"
 	"time"
 
 	"gorm.io/driver/postgres"
@@ -21,7 +22,41 @@ type ShardCfg struct {
 }
 
 type DB struct {
-	Base *gorm.DB
+	Base   *gorm.DB
+	shards map[int]ShardCfg // keep original shard config for logging
+}
+
+// ShardInfo returns the shard config for logging.
+func (d *DB) ShardInfo(shardID int) (ShardCfg, bool) {
+	s, ok := d.shards[shardID]
+	return s, ok
+}
+
+// RedactDSN returns a safe, short form of a Postgres DSN for logs.
+// Example: "host=shard1-pgpool port=5432 dbname=appdb"
+func RedactDSN(dsn string) string {
+	// Extract host, port, dbname from "key=value" DSN
+	reKV := regexp.MustCompile(`\b(host|port|dbname)=\S+`)
+	parts := reKV.FindAllString(dsn, -1)
+	if len(parts) == 0 {
+		// Try URL-form DSN: postgres://user:pass@host:port/dbname?...
+		reURL := regexp.MustCompile(`@([^:/\s]+):?(\d+)?/([^?\s]+)`)
+		if m := reURL.FindStringSubmatch(dsn); len(m) >= 4 {
+			host := m[1]
+			port := m[2]
+			db := m[3]
+			if port == "" {
+				return fmt.Sprintf("host=%s dbname=%s", host, db)
+			}
+			return fmt.Sprintf("host=%s port=%s dbname=%s", host, port, db)
+		}
+		// Fallback: return first 48 chars
+		if len(dsn) > 48 {
+			return dsn[:48] + "…"
+		}
+		return dsn
+	}
+	return fmt.Sprintf("%s", parts)
 }
 
 func OpenFromEnv() *DB {
@@ -70,14 +105,21 @@ func OpenFromEnv() *DB {
 		log.Fatalf("dbresolver use failed: %v", err)
 	}
 
-	return &DB{Base: base}
+	shardMap := make(map[int]ShardCfg, len(shards))
+	for _, s := range shards {
+		shardMap[s.ID] = s
+	}
+
+	return &DB{Base: base, shards: shardMap}
 }
 
 func (d *DB) Pick(shardID int) *gorm.DB {
+	// Reads: hit configured replicas (or pgpool) for this shard.
 	return d.Base.Clauses(dbresolver.Use(fmt.Sprintf("shard%d", shardID)))
 }
 
 func (d *DB) ForcePrimary(shardID int) *gorm.DB {
+	// Writes: force primary (writer) for this shard.
 	return d.Base.Clauses(
 		dbresolver.Use(fmt.Sprintf("shard%d", shardID)),
 		dbresolver.Write,
