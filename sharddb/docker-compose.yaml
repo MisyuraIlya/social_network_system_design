@@ -1,6 +1,4 @@
-# docker-compose.yml
 # Two Postgres shards with automatic failover (repmgr) + pgpool per shard.
-# No pgAdmin section (you said you have it locally).
 # If you are on native amd64 Linux, you can remove the `platform: linux/amd64` lines.
 
 networks:
@@ -27,15 +25,18 @@ services:
       - POSTGRESQL_USERNAME=app
       - POSTGRESQL_PASSWORD=app_pass_shard1
       - POSTGRESQL_DATABASE=appdb
+      - POSTGRESQL_POSTGRES_PASSWORD=supersecret
       # quorum sync: 1 synchronous standby; others async
       - POSTGRESQL_SYNCHRONOUS_COMMIT=on
       - POSTGRESQL_NUM_SYNCHRONOUS_REPLICAS=1
       # repmgr
+      - REPMGR_PRIMARY_HOST=shard1-pg-0
       - REPMGR_NODE_NAME=shard1-pg-0
       - REPMGR_NODE_NETWORK_NAME=shard1-pg-0
       - REPMGR_PARTNER_NODES=shard1-pg-0,shard1-pg-1,shard1-pg-2
       - REPMGR_USERNAME=repl
       - REPMGR_PASSWORD=repl_pass
+      - REPMGR_DATABASE=repmgr
       - REPMGR_PRIMARY_ROLE_WAIT=false
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U app -d appdb"]
@@ -45,6 +46,8 @@ services:
     volumes:
       - shard1-pg-0-data:/bitnami/postgresql
     networks: [db-net]
+    ports:
+      - "127.0.0.1:15432:5432"
 
   shard1-pg-1:
     platform: linux/amd64
@@ -56,6 +59,7 @@ services:
       - POSTGRESQL_USERNAME=app
       - POSTGRESQL_PASSWORD=app_pass_shard1
       - POSTGRESQL_DATABASE=appdb
+      - POSTGRESQL_POSTGRES_PASSWORD=supersecret
       - POSTGRESQL_SYNCHRONOUS_COMMIT=on
       - POSTGRESQL_NUM_SYNCHRONOUS_REPLICAS=1
       - REPMGR_PRIMARY_HOST=shard1-pg-0
@@ -64,6 +68,7 @@ services:
       - REPMGR_PARTNER_NODES=shard1-pg-0,shard1-pg-1,shard1-pg-2
       - REPMGR_USERNAME=repl
       - REPMGR_PASSWORD=repl_pass
+      - REPMGR_DATABASE=repmgr
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U app -d appdb"]
       interval: 10s
@@ -72,6 +77,8 @@ services:
     volumes:
       - shard1-pg-1-data:/bitnami/postgresql
     networks: [db-net]
+    ports:
+      - "127.0.0.1:15433:5432"
 
   shard1-pg-2:
     platform: linux/amd64
@@ -83,6 +90,7 @@ services:
       - POSTGRESQL_USERNAME=app
       - POSTGRESQL_PASSWORD=app_pass_shard1
       - POSTGRESQL_DATABASE=appdb
+      - POSTGRESQL_POSTGRES_PASSWORD=supersecret
       - POSTGRESQL_SYNCHRONOUS_COMMIT=on
       - POSTGRESQL_NUM_SYNCHRONOUS_REPLICAS=1
       - REPMGR_PRIMARY_HOST=shard1-pg-0
@@ -91,6 +99,7 @@ services:
       - REPMGR_PARTNER_NODES=shard1-pg-0,shard1-pg-1,shard1-pg-2
       - REPMGR_USERNAME=repl
       - REPMGR_PASSWORD=repl_pass
+      - REPMGR_DATABASE=repmgr
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U app -d appdb"]
       interval: 10s
@@ -99,6 +108,8 @@ services:
     volumes:
       - shard1-pg-2-data:/bitnami/postgresql
     networks: [db-net]
+    ports:
+      - "127.0.0.1:15434:5432"
 
   # Connection pool + stable writer/reader endpoint for Shard 1
   shard1-pgpool:
@@ -123,7 +134,7 @@ services:
       timeout: 3s
       retries: 10
     ports:
-      - "6433:5432"
+      - "127.0.0.1:6433:5432"
     networks: [db-net]
 
   # =========================
@@ -138,13 +149,16 @@ services:
       - POSTGRESQL_USERNAME=app
       - POSTGRESQL_PASSWORD=app_pass_shard2
       - POSTGRESQL_DATABASE=appdb
+      - POSTGRESQL_POSTGRES_PASSWORD=supersecret
       - POSTGRESQL_SYNCHRONOUS_COMMIT=on
       - POSTGRESQL_NUM_SYNCHRONOUS_REPLICAS=1
+      - REPMGR_PRIMARY_HOST=shard2-pg-0
       - REPMGR_NODE_NAME=shard2-pg-0
       - REPMGR_NODE_NETWORK_NAME=shard2-pg-0
       - REPMGR_PARTNER_NODES=shard2-pg-0,shard2-pg-1,shard2-pg-2
       - REPMGR_USERNAME=repl
       - REPMGR_PASSWORD=repl_pass
+      - REPMGR_DATABASE=repmgr
       - REPMGR_PRIMARY_ROLE_WAIT=false
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U app -d appdb"]
@@ -154,6 +168,8 @@ services:
     volumes:
       - shard2-pg-0-data:/bitnami/postgresql
     networks: [db-net]
+    ports:
+      - "127.0.0.1:25432:5432"
 
   shard2-pg-1:
     platform: linux/amd64
@@ -165,6 +181,7 @@ services:
       - POSTGRESQL_USERNAME=app
       - POSTGRESQL_PASSWORD=app_pass_shard2
       - POSTGRESQL_DATABASE=appdb
+      - POSTGRESQL_POSTGRES_PASSWORD=supersecret
       - POSTGRESQL_SYNCHRONOUS_COMMIT=on
       - POSTGRESQL_NUM_SYNCHRONOUS_REPLICAS=1
       - REPMGR_PRIMARY_HOST=shard2-pg-0
@@ -173,6 +190,7 @@ services:
       - REPMGR_PARTNER_NODES=shard2-pg-0,shard2-pg-1,shard2-pg-2
       - REPMGR_USERNAME=repl
       - REPMGR_PASSWORD=repl_pass
+      - REPMGR_DATABASE=repmgr
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U app -d appdb"]
       interval: 10s
@@ -181,6 +199,8 @@ services:
     volumes:
       - shard2-pg-1-data:/bitnami/postgresql
     networks: [db-net]
+    ports:
+      - "127.0.0.1:25433:5432"
 
   shard2-pg-2:
     platform: linux/amd64
@@ -192,6 +212,7 @@ services:
       - POSTGRESQL_USERNAME=app
       - POSTGRESQL_PASSWORD=app_pass_shard2
       - POSTGRESQL_DATABASE=appdb
+      - POSTGRESQL_POSTGRES_PASSWORD=supersecret
       - POSTGRESQL_SYNCHRONOUS_COMMIT=on
       - POSTGRESQL_NUM_SYNCHRONOUS_REPLICAS=1
       - REPMGR_PRIMARY_HOST=shard2-pg-0
@@ -200,6 +221,7 @@ services:
       - REPMGR_PARTNER_NODES=shard2-pg-0,shard2-pg-1,shard2-pg-2
       - REPMGR_USERNAME=repl
       - REPMGR_PASSWORD=repl_pass
+      - REPMGR_DATABASE=repmgr
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U app -d appdb"]
       interval: 10s
@@ -208,6 +230,8 @@ services:
     volumes:
       - shard2-pg-2-data:/bitnami/postgresql
     networks: [db-net]
+    ports:
+      - "127.0.0.1:25434:5432"
 
   # Connection pool + stable writer/reader endpoint for Shard 2
   shard2-pgpool:
@@ -232,5 +256,5 @@ services:
       timeout: 3s
       retries: 10
     ports:
-      - "7433:5432"
+      - "127.0.0.1:7433:5432"
     networks: [db-net]
