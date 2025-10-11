@@ -1,0 +1,132 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "type": "stat",
+      "title": "User Service Up",
+      "id": 1,
+      "gridPos": {"h": 5, "w": 6, "x": 0, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROM}"},
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "orientation": "auto",
+        "textMode": "value",
+        "colorMode": "value",
+        "graphMode": "area"
+      },
+      "targets": [
+        {"refId": "A", "expr": "up{job=\"user-service\"}", "legendFormat": "up"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "CPU Usage (seconds per second)",
+      "id": 2,
+      "gridPos": {"h": 8, "w": 9, "x": 6, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROM}"},
+      "fieldConfig": {"defaults": {"unit": "none"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom"}},
+      "targets": [
+        {"refId": "A", "expr": "rate(process_cpu_seconds_total{job=\"user-service\"}[5m])", "legendFormat": "CPU"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Memory RSS (bytes)",
+      "id": 3,
+      "gridPos": {"h": 8, "w": 9, "x": 15, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROM}"},
+      "fieldConfig": {"defaults": {"unit": "bytes"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom"}},
+      "targets": [
+        {"refId": "A", "expr": "process_resident_memory_bytes{job=\"user-service\"}", "legendFormat": "RSS"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Go Goroutines",
+      "id": 4,
+      "gridPos": {"h": 8, "w": 9, "x": 0, "y": 5},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROM}"},
+      "targets": [
+        {"refId": "A", "expr": "go_goroutines{job=\"user-service\"}", "legendFormat": "goroutines"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Heap Allocated (bytes)",
+      "id": 5,
+      "gridPos": {"h": 8, "w": 9, "x": 9, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROM}"},
+      "fieldConfig": {"defaults": {"unit": "bytes"}, "overrides": []},
+      "targets": [
+        {"refId": "A", "expr": "go_memstats_alloc_bytes{job=\"user-service\"}", "legendFormat": "alloc"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "GC Avg Pause (s)",
+      "id": 6,
+      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROM}"},
+      "targets": [
+        {"refId": "A", "expr": "rate(go_gc_duration_seconds_sum{job=\"user-service\"}[5m]) / rate(go_gc_duration_seconds_count{job=\"user-service\"}[5m])", "legendFormat": "avg pause"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Scrape Duration (s)",
+      "id": 7,
+      "gridPos": {"h": 6, "w": 8, "x": 0, "y": 13},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROM}"},
+      "targets": [
+        {"refId": "A", "expr": "scrape_duration_seconds{job=\"user-service\"}", "legendFormat": "scrape"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Scrape Samples Post Metric Relabeling",
+      "id": 8,
+      "gridPos": {"h": 6, "w": 8, "x": 8, "y": 13},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROM}"},
+      "targets": [
+        {"refId": "A", "expr": "scrape_samples_post_metric_relabeling{job=\"user-service\"}", "legendFormat": "samples"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "File Descriptors (open vs max)",
+      "id": 9,
+      "gridPos": {"h": 6, "w": 8, "x": 16, "y": 13},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROM}"},
+      "targets": [
+        {"refId": "A", "expr": "process_open_fds{job=\"user-service\"}", "legendFormat": "open"},
+        {"refId": "B", "expr": "process_max_fds{job=\"user-service\"}", "legendFormat": "max"}
+      ]
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["prometheus", "user-service", "go"],
+  "templating": {
+    "list": [
+      {"name": "DS_PROM", "label": "Prometheus datasource", "type": "datasource", "query": "prometheus", "hide": 0}
+    ]
+  },
+  "time": {"from": "now-1h", "to": "now"},
+  "timepicker": {
+    "refresh_intervals": ["5s","10s","15s","30s","1m","5m","15m","30m","1h"],
+    "time_options": ["5m","15m","1h","6h","12h","24h","2d","7d","30d"]
+  },
+  "timezone": "",
+  "title": "User Service / Prometheus",
+  "version": 1,
+  "weekStart": ""
+}
