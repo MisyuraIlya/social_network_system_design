@@ -19,6 +19,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
 	"go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
@@ -27,9 +28,8 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	// GORM tracing plugin
-	"gorm.io/plugin/opentelemetry/tracing"
-
 	"gorm.io/gorm"
+	"gorm.io/plugin/opentelemetry/tracing"
 )
 
 type ShardPicker interface {
@@ -47,7 +47,8 @@ func env(key, fallback string) string {
 func initTracer(ctx context.Context, serviceName string) (func(context.Context) error, error) {
 	endpoint := env("OTEL_EXPORTER_OTLP_ENDPOINT", "otel-collector:4318")
 
-	exp, err := otlptracehttp.New(ctx,
+	exp, err := otlptracehttp.New(
+		ctx,
 		otlptracehttp.WithEndpoint(endpoint),
 		otlptracehttp.WithInsecure(),
 	)
@@ -74,10 +75,19 @@ func initTracer(ctx context.Context, serviceName string) (func(context.Context) 
 
 	tp := trace.NewTracerProvider(
 		trace.WithSampler(trace.ParentBased(trace.TraceIDRatioBased(ratio))),
-		trace.WithBatcher(exp, trace.WithMaxExportBatchSize(512), trace.WithBatchTimeout(3*time.Second)),
+		trace.WithBatcher(exp,
+			trace.WithMaxExportBatchSize(512),
+			trace.WithBatchTimeout(3*time.Second),
+		),
 		trace.WithResource(res),
 	)
 	otel.SetTracerProvider(tp)
+
+	// Honor W3C TraceContext + Baggage for inbound/outbound requests.
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
+		propagation.TraceContext{}, propagation.Baggage{},
+	))
+
 	return tp.Shutdown, nil
 }
 
@@ -91,20 +101,26 @@ func mustAtoi(s string) int {
 
 func main() {
 	ctx := context.Background()
+
 	shutdown, err := initTracer(ctx, "user-service")
 	if err != nil {
 		log.Fatalf("otel init failed: %v", err)
 	}
-	defer func() { _ = shutdown(ctx) }()
+	// Give exporter time to flush on stop.
+	defer func() {
+		c, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		_ = shutdown(c)
+	}()
 
 	store := db.OpenFromEnv()
 
-	// Enable SQL spans from GORM
+	// Enable SQL spans from GORM.
 	if err := store.Base.Use(tracing.NewPlugin()); err != nil {
 		log.Fatalf("gorm otel plugin failed: %v", err)
 	}
 
-	// Auto-migrate across shards if requested
+	// Auto-migrate across shards if requested.
 	if os.Getenv("AUTO_MIGRATE") == "true" {
 		numShards := mustAtoi(os.Getenv("NUM_SHARDS"))
 		for i := 0; i < numShards; i++ {
@@ -118,11 +134,11 @@ func main() {
 	svc := user.NewUserService(repo)
 	handler := user.NewUserHandler(svc)
 
-	// App routes
+	// App routes.
 	api := http.NewServeMux()
 	user.RegisterRoutes(api, handler)
 
-	// Root mux: /metrics + OTel-instrumented app
+	// Root mux: /metrics + OTel-instrumented app.
 	root := http.NewServeMux()
 	root.Handle("/metrics", promhttp.Handler())
 	root.Handle("/", otelhttp.NewHandler(api, "http.server"))
