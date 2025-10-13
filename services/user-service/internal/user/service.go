@@ -5,100 +5,63 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"strconv"
 
-	"users-service/pkg/shard"
+	"users-service/internal/shared/shard"
 
 	"golang.org/x/crypto/bcrypt"
 )
 
-type IUserService interface {
+type Service interface {
 	Register(email, password, name string) (*User, error)
 	Login(email, password string) (*User, error)
-	ListAll(shardID int) ([]User, error)
-	ListShard(shardID, limit, offset int) ([]User, error)
 	GetByUserID(uid string) (*User, error)
+	ListMine(shardID, limit, offset int) ([]User, error)
 }
-
-type UserService struct {
-	repo      IUserRepository
+type service struct {
+	repo      Repository
 	numShards int
 }
 
-func NewUserService(repo IUserRepository) IUserService {
-	ns := 1
-	if v := os.Getenv("NUM_SHARDS"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			ns = n
+func NewService(r Repository) Service {
+	n := 1
+	if s := os.Getenv("NUM_SHARDS"); s != "" {
+		if v, e := strconv.Atoi(s); e == nil && v > 0 {
+			n = v
 		}
 	}
-	return &UserService{repo: repo, numShards: ns}
+	return &service{repo: r, numShards: n}
 }
 
-func (s *UserService) Register(email, password, name string) (*User, error) {
-	sh := shard.PickShard(email, s.numShards)
-	log.Printf("[user-service] Register route -> picked shard=%d for email=%s", sh, email)
-
-	// ensure uniqueness on the owning shard
-	if existing, _ := s.repo.FindByEmail(email, sh); existing != nil {
-		return nil, errors.New("user already exists")
+func (s *service) Register(email, password, name string) (*User, error) {
+	sh := shard.Pick(email, s.numShards)
+	if exist, _ := s.repo.GetByEmail(email, sh); exist != nil {
+		return nil, errors.New("user exists")
 	}
-
-	// user_id format: "<shard>-<random64hex>"
 	var b [8]byte
 	_, _ = rand.Read(b[:])
 	uid := fmt.Sprintf("%d-%x", sh, binary.BigEndian.Uint64(b[:]))
-
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
-		return nil, errors.New("failed to hash password")
+		return nil, errors.New("hash fail")
 	}
-
-	u := &User{
-		UserID:   uid,
-		ShardID:  sh,
-		Email:    email,
-		Password: string(hash),
-		Name:     name,
-	}
-	return s.repo.Create(u)
+	return s.repo.Create(&User{
+		UserID: uid, ShardID: sh, Email: email, PassHash: string(hash), Name: name,
+	})
 }
-
-func (s *UserService) Login(email, password string) (*User, error) {
-	sh := shard.PickShard(email, s.numShards)
-	log.Printf("[user-service] Login route -> picked shard=%d for email=%s", sh, email)
-
-	usr, err := s.repo.FindByEmail(email, sh)
+func (s *service) Login(email, password string) (*User, error) {
+	sh := shard.Pick(email, s.numShards)
+	u, err := s.repo.GetByEmail(email, sh)
 	if err != nil {
 		return nil, errors.New("wrong credentials")
 	}
-	if bcrypt.CompareHashAndPassword([]byte(usr.Password), []byte(password)) != nil {
+	if bcrypt.CompareHashAndPassword([]byte(u.PassHash), []byte(password)) != nil {
 		return nil, errors.New("wrong credentials")
 	}
-	return usr, nil
+	return u, nil
 }
-
-func (s *UserService) ListAll(shardID int) ([]User, error) {
-	return s.repo.FindAllByShard(shardID)
-}
-
-func (s *UserService) GetByUserID(uid string) (*User, error) {
-	sh, ok := shard.ExtractShard(uid)
-	if ok {
-		log.Printf("[user-service] GetByUserID -> extracted shard=%d from user_id=%s", sh, uid)
-	}
-	return s.repo.FindByUserID(uid)
-}
-
-func (s *UserService) ListShard(shardID, limit, offset int) ([]User, error) {
-	if limit <= 0 || limit > 1000 {
-		limit = 50
-	}
-	if offset < 0 {
-		offset = 0
-	}
-	log.Printf("[user-service] ListShard -> shard=%d limit=%d offset=%d", shardID, limit, offset)
-	return s.repo.FindAllByShardPaged(shardID, limit, offset)
+func (s *service) GetByUserID(uid string) (*User, error) { return s.repo.GetByUserID(uid) }
+func (s *service) ListMine(shardID, limit, offset int) ([]User, error) {
+	return s.repo.ListByShard(shardID, limit, offset)
 }
