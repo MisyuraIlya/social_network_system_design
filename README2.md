@@ -38,7 +38,7 @@ services:
     networks:
       socialnet: {}
     ports:
-      - "15432:5432"   # admin/debug access to node 0
+      - "15432:5432"
 
   shard1-pg-1:
     platform: linux/amd64
@@ -72,7 +72,7 @@ services:
     networks:
       socialnet: {}
     ports:
-      - "15433:5432"   # admin/debug access to node 1
+      - "15433:5432"
 
   shard1-pg-2:
     platform: linux/amd64
@@ -106,7 +106,7 @@ services:
     networks:
       socialnet: {}
     ports:
-      - "15434:5432"   # admin/debug access to node 2
+      - "15434:5432"
 
   shard1-pgpool:
     platform: linux/amd64
@@ -127,21 +127,15 @@ services:
       - PGPOOL_POSTGRES_USERNAME=app
       - PGPOOL_POSTGRES_PASSWORD=app_pass_shard1
       - PGPOOL_ENABLE_LOAD_BALANCING=yes
-      # REQUIRED by Bitnami image:
       - PGPOOL_ADMIN_USERNAME=admin
       - PGPOOL_ADMIN_PASSWORD=adminpass
     healthcheck:
-      # Ensure bash for /dev/tcp
       test: ["CMD-SHELL", "bash -lc '</dev/tcp/127.0.0.1/5432' || exit 1"]
-      interval: 10s
-      timeout: 3s
-      retries: 30
     networks:
       socialnet:
-        aliases:
-          - shard1-pgpool
+        aliases: [shard1-pgpool]
     ports:
-      - "6433:5432"    # EXPOSED: client entrypoint for Shard 1
+      - "6433:5432"
 
   # =========================
   # USERS DB – SHARD 2 (repmgr)
@@ -168,15 +162,12 @@ services:
       - REPMGR_PRIMARY_ROLE_WAIT=false
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U app -d appdb"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
     volumes:
       - shard2-pg-0-data:/bitnami/postgresql
     networks:
       socialnet: {}
     ports:
-      - "25432:5432"   # admin/debug access to node 0
+      - "25432:5432"
 
   shard2-pg-1:
     platform: linux/amd64
@@ -202,15 +193,12 @@ services:
       - REPMGR_DATABASE=repmgr
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U app -d appdb"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
     volumes:
       - shard2-pg-1-data:/bitnami/postgresql
     networks:
       socialnet: {}
     ports:
-      - "25433:5432"   # admin/debug access to node 1
+      - "25433:5432"
 
   shard2-pg-2:
     platform: linux/amd64
@@ -236,15 +224,12 @@ services:
       - REPMGR_DATABASE=repmgr
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U app -d appdb"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
     volumes:
       - shard2-pg-2-data:/bitnami/postgresql
     networks:
       socialnet: {}
     ports:
-      - "25434:5432"   # admin/debug access to node 2
+      - "25434:5432"
 
   shard2-pgpool:
     platform: linux/amd64
@@ -265,20 +250,15 @@ services:
       - PGPOOL_POSTGRES_USERNAME=app
       - PGPOOL_POSTGRES_PASSWORD=app_pass_shard2
       - PGPOOL_ENABLE_LOAD_BALANCING=yes
-      # REQUIRED by Bitnami image:
       - PGPOOL_ADMIN_USERNAME=admin
       - PGPOOL_ADMIN_PASSWORD=adminpass
     healthcheck:
       test: ["CMD-SHELL", "bash -lc '</dev/tcp/127.0.0.1/5432' || exit 1"]
-      interval: 10s
-      timeout: 3s
-      retries: 30
     networks:
       socialnet:
-        aliases:
-          - shard2-pgpool
+        aliases: [shard2-pgpool]
     ports:
-      - "7433:5432"    # EXPOSED: client entrypoint for Shard 2
+      - "7433:5432"
 
   # -------------------------
   # OTHER Postgres DBs
@@ -296,9 +276,6 @@ services:
       socialnet: {}
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U post -d post_db"]
-      interval: 5s
-      timeout: 3s
-      retries: 30
     ports:
       - "5434:5432"
 
@@ -315,9 +292,6 @@ services:
       socialnet: {}
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U feedback -d feedback_db"]
-      interval: 5s
-      timeout: 3s
-      retries: 30
     ports:
       - "5435:5432"
 
@@ -334,9 +308,6 @@ services:
       socialnet: {}
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U notify -d message_db"]
-      interval: 5s
-      timeout: 3s
-      retries: 30
     ports:
       - "5436:5432"
 
@@ -353,9 +324,6 @@ services:
       socialnet: {}
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 30
 
   redis-message:
     image: redis:7
@@ -367,9 +335,6 @@ services:
       socialnet: {}
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 30
 
   redis-feedback:
     image: redis:7
@@ -381,9 +346,6 @@ services:
       socialnet: {}
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 30
 
   kafka:
     image: confluentinc/cp-kafka:7.7.1
@@ -433,9 +395,6 @@ services:
       socialnet: {}
     healthcheck:
       test: ["CMD-SHELL", "curl -s http://localhost:9000/minio/health/ready || exit 1"]
-      interval: 5s
-      timeout: 3s
-      retries: 30
 
   #################################################################
   #                       USER SERVICE (N SHARDS)                 #
@@ -466,11 +425,22 @@ services:
       AUTO_MIGRATE: "true"
       AIR_WATCHER_FORCE_POLLING: "true"
       AIR_TMP_DIR: "/app/tmp"
+      # OpenTelemetry
+      OTEL_EXPORTER_OTLP_ENDPOINT: "otel-collector:4318"
+      OTEL_TRACES_SAMPLER: "parentbased_traceidratio"
+      OTEL_TRACES_SAMPLER_ARG: "1.0"
+      OTEL_RESOURCE_ATTRIBUTES: "service.name=user-service,service.version=1.0.0,env=local"
+      OTEL_SERVICE_NAME: "user-service"
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "http://otel-collector:4318/v1/traces"
+      OTEL_EXPORTER_OTLP_PROTOCOL: "http/protobuf"
+      OTEL_EXPORTER_OTLP_TRACES_PROTOCOL: "http/protobuf"
     depends_on:
       shard1-pgpool:
         condition: service_healthy
       shard2-pgpool:
         condition: service_healthy
+      otel-collector:
+        condition: service_started
     networks:
       socialnet: {}
     ports:
@@ -654,6 +624,115 @@ services:
     networks:
       socialnet: {}
 
+  #################################################################
+  #                        OBSERVABILITY                          #
+  #################################################################
+  otel-collector:
+    image: otel/opentelemetry-collector:0.106.0
+    container_name: otel-collector
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./observability/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+    networks:
+      socialnet: {}
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.59
+    container_name: jaeger
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - "16686:16686"
+      - "14250:14250"
+      - "14268:14268"
+    networks:
+      socialnet: {}
+
+  loki:
+    image: grafana/loki:2.9.8
+    container_name: loki
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+    volumes:
+      - ./observability/loki-config.yaml:/etc/loki/local-config.yaml:ro
+      - loki_data:/loki
+    ports:
+      - "3100:3100"
+    networks:
+      socialnet: {}
+
+  promtail:
+    image: grafana/promtail:2.9.8
+    container_name: promtail
+    command: ["-config.file=/etc/promtail/config.yml"]
+    volumes:
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./observability/promtail-config.yml:/etc/promtail/config.yml:ro
+    networks:
+      socialnet: {}
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    container_name: prometheus
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=15d"
+    ports:
+      - "9090:9090"
+    networks:
+      socialnet: {}
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_DEFAULT_THEME=light
+    volumes:
+      - ./observability/grafana-datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml
+      - ./observability/grafana-dashboards.yaml:/etc/grafana/provisioning/dashboards/dashboards.yaml
+      - ./observability/dashboards:/var/lib/grafana/dashboards
+    depends_on:
+      - prometheus
+      - loki
+    networks:
+      socialnet: {}
+
+  postgres-exporter-shard1:
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.15.0
+    container_name: postgres-exporter-shard1
+    environment:
+      DATA_SOURCE_NAME: "postgresql://app:app_pass_shard1@shard1-pgpool:5432/appdb?sslmode=disable"
+    ports: ["9187:9187"]
+    networks: { socialnet: {} }
+    depends_on: { shard1-pgpool: { condition: service_healthy } }
+
+  postgres-exporter-shard2:
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.15.0
+    container_name: postgres-exporter-shard2
+    environment:
+      DATA_SOURCE_NAME: "postgresql://app:app_pass_shard2@shard2-pgpool:5432/appdb?sslmode=disable"
+    ports: ["9188:9187"]
+    networks: { socialnet: {} }
+    depends_on: { shard2-pgpool: { condition: service_healthy } }
+
+  redis-exporter-feed:
+    image: oliver006/redis_exporter:v1.62.0
+    container_name: redis-exporter-feed
+    command: ["--redis.addr=redis-feed:6379"]
+    ports: ["9121:9121"]
+    networks: { socialnet: {} }
+    depends_on: { redis-feed: { condition: service_healthy } }
+
 networks:
   socialnet:
 
@@ -682,23 +761,45 @@ volumes:
   # Kafka
   kafka_data:
 
+  # Observability
+  loki_data:
+  prometheus_data:
+  grafana_data:
 
-i currently work on users service
-here my code
+here my user service completed now
 services/user-service/cmd/main.go
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"strconv"
+	"time"
 
 	"users-service/internal/user"
 	"users-service/pkg/db"
 
+	// Prometheus metrics endpoint
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+	// OpenTelemetry core
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/sdk/resource"
+	"go.opentelemetry.io/otel/sdk/trace"
+	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
+
+	// HTTP middleware instrumentation
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+
+	// GORM tracing plugin
 	"gorm.io/gorm"
+	"gorm.io/plugin/opentelemetry/tracing"
 )
 
 type ShardPicker interface {
@@ -706,9 +807,90 @@ type ShardPicker interface {
 	ForcePrimary(shardID int) *gorm.DB
 }
 
+func env(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+func initTracer(ctx context.Context, serviceName string) (func(context.Context) error, error) {
+	endpoint := env("OTEL_EXPORTER_OTLP_ENDPOINT", "otel-collector:4318")
+
+	exp, err := otlptracehttp.New(
+		ctx,
+		otlptracehttp.WithEndpoint(endpoint),
+		otlptracehttp.WithInsecure(),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("otlptracehttp: %w", err)
+	}
+
+	res, _ := resource.Merge(
+		resource.Default(),
+		resource.NewWithAttributes(
+			semconv.SchemaURL,
+			semconv.ServiceName(serviceName),
+			attribute.String("service.version", "1.0.0"),
+			attribute.String("deployment.environment", env("ENV", "local")),
+		),
+	)
+
+	ratio := 1.0
+	if v := os.Getenv("OTEL_TRACES_SAMPLER_ARG"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil && f >= 0 && f <= 1 {
+			ratio = f
+		}
+	}
+
+	tp := trace.NewTracerProvider(
+		trace.WithSampler(trace.ParentBased(trace.TraceIDRatioBased(ratio))),
+		trace.WithBatcher(exp,
+			trace.WithMaxExportBatchSize(512),
+			trace.WithBatchTimeout(3*time.Second),
+		),
+		trace.WithResource(res),
+	)
+	otel.SetTracerProvider(tp)
+
+	// Honor W3C TraceContext + Baggage for inbound/outbound requests.
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
+		propagation.TraceContext{}, propagation.Baggage{},
+	))
+
+	return tp.Shutdown, nil
+}
+
+func mustAtoi(s string) int {
+	n, _ := strconv.Atoi(s)
+	if n <= 0 {
+		n = 1
+	}
+	return n
+}
+
 func main() {
+	ctx := context.Background()
+
+	shutdown, err := initTracer(ctx, "user-service")
+	if err != nil {
+		log.Fatalf("otel init failed: %v", err)
+	}
+	// Give exporter time to flush on stop.
+	defer func() {
+		c, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		_ = shutdown(c)
+	}()
+
 	store := db.OpenFromEnv()
 
+	// Enable SQL spans from GORM.
+	if err := store.Base.Use(tracing.NewPlugin()); err != nil {
+		log.Fatalf("gorm otel plugin failed: %v", err)
+	}
+
+	// Auto-migrate across shards if requested.
 	if os.Getenv("AUTO_MIGRATE") == "true" {
 		numShards := mustAtoi(os.Getenv("NUM_SHARDS"))
 		for i := 0; i < numShards; i++ {
@@ -722,23 +904,26 @@ func main() {
 	svc := user.NewUserService(repo)
 	handler := user.NewUserHandler(svc)
 
-	mux := http.NewServeMux()
-	user.RegisterRoutes(mux, handler)
+	// App routes.
+	api := http.NewServeMux()
+	user.RegisterRoutes(api, handler)
 
-	addr := os.Getenv("APP_PORT")
-	if addr == "" {
-		addr = ":8081"
+	// Root mux: /metrics + OTel-instrumented app.
+	root := http.NewServeMux()
+	root.Handle("/metrics", promhttp.Handler())
+	root.Handle("/", otelhttp.NewHandler(api, "http.server"))
+
+	addr := env("APP_PORT", ":8081")
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           root,
+		ReadHeaderTimeout: 5 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       90 * time.Second,
 	}
+
 	fmt.Printf("User Service listening on %s\n", addr)
-	log.Fatal(http.ListenAndServe(addr, mux))
-}
-
-func mustAtoi(s string) int {
-	n, _ := strconv.Atoi(s)
-	if n <= 0 {
-		n = 1
-	}
-	return n
+	log.Fatal(srv.ListenAndServe())
 }
 
 services/user-service/configs/config.go
@@ -775,6 +960,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"regexp"
 	"time"
 
 	"gorm.io/driver/postgres"
@@ -790,7 +976,41 @@ type ShardCfg struct {
 }
 
 type DB struct {
-	Base *gorm.DB
+	Base   *gorm.DB
+	shards map[int]ShardCfg // keep original shard config for logging
+}
+
+// ShardInfo returns the shard config for logging.
+func (d *DB) ShardInfo(shardID int) (ShardCfg, bool) {
+	s, ok := d.shards[shardID]
+	return s, ok
+}
+
+// RedactDSN returns a safe, short form of a Postgres DSN for logs.
+// Example: "host=shard1-pgpool port=5432 dbname=appdb"
+func RedactDSN(dsn string) string {
+	// Extract host, port, dbname from "key=value" DSN
+	reKV := regexp.MustCompile(`\b(host|port|dbname)=\S+`)
+	parts := reKV.FindAllString(dsn, -1)
+	if len(parts) == 0 {
+		// Try URL-form DSN: postgres://user:pass@host:port/dbname?...
+		reURL := regexp.MustCompile(`@([^:/\s]+):?(\d+)?/([^?\s]+)`)
+		if m := reURL.FindStringSubmatch(dsn); len(m) >= 4 {
+			host := m[1]
+			port := m[2]
+			db := m[3]
+			if port == "" {
+				return fmt.Sprintf("host=%s dbname=%s", host, db)
+			}
+			return fmt.Sprintf("host=%s port=%s dbname=%s", host, port, db)
+		}
+		// Fallback: return first 48 chars
+		if len(dsn) > 48 {
+			return dsn[:48] + "…"
+		}
+		return dsn
+	}
+	return fmt.Sprintf("%s", parts)
 }
 
 func OpenFromEnv() *DB {
@@ -839,14 +1059,21 @@ func OpenFromEnv() *DB {
 		log.Fatalf("dbresolver use failed: %v", err)
 	}
 
-	return &DB{Base: base}
+	shardMap := make(map[int]ShardCfg, len(shards))
+	for _, s := range shards {
+		shardMap[s.ID] = s
+	}
+
+	return &DB{Base: base, shards: shardMap}
 }
 
 func (d *DB) Pick(shardID int) *gorm.DB {
+	// Reads: hit configured replicas (or pgpool) for this shard.
 	return d.Base.Clauses(dbresolver.Use(fmt.Sprintf("shard%d", shardID)))
 }
 
 func (d *DB) ForcePrimary(shardID int) *gorm.DB {
+	// Writes: force primary (writer) for this shard.
 	return d.Base.Clauses(
 		dbresolver.Use(fmt.Sprintf("shard%d", shardID)),
 		dbresolver.Write,
@@ -894,35 +1121,6 @@ func pingWithTimeout(sqlDB *sql.DB, timeout time.Duration) error {
 	case <-time.After(timeout):
 		return fmt.Errorf("db ping timeout after %s", timeout)
 	}
-}
-
-services/user-service/pkg/shard/shard.go
-package shard
-
-import (
-	"crypto/sha256"
-	"encoding/binary"
-	"strconv"
-	"strings"
-)
-
-func PickShard(key string, numShards int) int {
-	h := sha256.Sum256([]byte(key))
-	v := binary.BigEndian.Uint32(h[:4]) ^ binary.BigEndian.Uint32(h[4:8])
-	return int(uint32(v) % uint32(numShards))
-}
-
-// "0-abcdef..." → 0, true
-func ExtractShard(userID string) (int, bool) {
-	i := strings.IndexByte(userID, '-')
-	if i <= 0 {
-		return 0, false
-	}
-	n, err := strconv.Atoi(userID[:i])
-	if err != nil {
-		return 0, false
-	}
-	return n, true
 }
 
 services/user-service/pkg/req/decode.go
@@ -984,6 +1182,34 @@ func Json(w http.ResponseWriter, data any, statusCode int) {
 	_ = json.NewEncoder(w).Encode(data)
 }
 
+services/user-service/pkg/shard/shard.go
+package shard
+
+import (
+	"crypto/sha256"
+	"encoding/binary"
+	"strconv"
+	"strings"
+)
+
+func PickShard(key string, numShards int) int {
+	h := sha256.Sum256([]byte(key))
+	v := binary.BigEndian.Uint32(h[:4]) ^ binary.BigEndian.Uint32(h[4:8])
+	return int(uint32(v) % uint32(numShards))
+}
+
+// "0-abcdef..." → 0, true
+func ExtractShard(userID string) (int, bool) {
+	i := strings.IndexByte(userID, '-')
+	if i <= 0 {
+		return 0, false
+	}
+	n, err := strconv.Atoi(userID[:i])
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
 
 services/user-service/internal/user/handler.go
 package user
@@ -1219,7 +1445,9 @@ package user
 
 import (
 	"errors"
+	"log"
 
+	"users-service/pkg/db"
 	"users-service/pkg/shard"
 
 	"gorm.io/gorm"
@@ -1228,6 +1456,8 @@ import (
 type ShardPicker interface {
 	Pick(shardID int) *gorm.DB
 	ForcePrimary(shardID int) *gorm.DB
+	// For logging (optional)
+	ShardInfo(shardID int) (db.ShardCfg, bool)
 }
 
 type IUserRepository interface {
@@ -1246,8 +1476,24 @@ func NewUserRepository(p ShardPicker) IUserRepository {
 	return &UserRepository{db: p}
 }
 
+func (r *UserRepository) logShard(where, role string, shardID int) {
+	if cfg, ok := r.db.ShardInfo(shardID); ok {
+		w := db.RedactDSN(cfg.Writer)
+		var readers string
+		if len(cfg.Readers) > 0 {
+			readers = db.RedactDSN(cfg.Readers[0])
+			if len(cfg.Readers) > 1 {
+				readers += " (+more)"
+			}
+		}
+		log.Printf("[repo:%s] role=%s shard=%d writer=[%s] reader0=[%s]", where, role, shardID, w, readers)
+	} else {
+		log.Printf("[repo:%s] role=%s shard=%d", where, role, shardID)
+	}
+}
+
 func (r *UserRepository) Create(u *User) (*User, error) {
-	// writes → primary
+	r.logShard("Create", "primary", u.ShardID)
 	if err := r.db.ForcePrimary(u.ShardID).Create(u).Error; err != nil {
 		return nil, err
 	}
@@ -1255,8 +1501,8 @@ func (r *UserRepository) Create(u *User) (*User, error) {
 }
 
 func (r *UserRepository) FindByEmail(email string, shardID int) (*User, error) {
+	r.logShard("FindByEmail", "replica", shardID)
 	var u User
-	// reads → replicas (via pgpool or direct)
 	if err := r.db.Pick(shardID).Where("email = ?", email).First(&u).Error; err != nil {
 		return nil, err
 	}
@@ -1268,6 +1514,7 @@ func (r *UserRepository) FindByUserID(uid string) (*User, error) {
 	if !ok {
 		return nil, errors.New("invalid user_id format")
 	}
+	r.logShard("FindByUserID", "replica", sh)
 	var u User
 	if err := r.db.Pick(sh).Where("user_id = ?", uid).First(&u).Error; err != nil {
 		return nil, err
@@ -1276,6 +1523,7 @@ func (r *UserRepository) FindByUserID(uid string) (*User, error) {
 }
 
 func (r *UserRepository) FindAllByShard(shardID int) ([]User, error) {
+	r.logShard("FindAllByShard", "replica", shardID)
 	var users []User
 	if err := r.db.Pick(shardID).Find(&users).Error; err != nil {
 		return nil, err
@@ -1284,6 +1532,7 @@ func (r *UserRepository) FindAllByShard(shardID int) ([]User, error) {
 }
 
 func (r *UserRepository) FindAllByShardPaged(shardID, limit, offset int) ([]User, error) {
+	r.logShard("FindAllByShardPaged", "replica", shardID)
 	var users []User
 	if err := r.db.Pick(shardID).
 		Order("created_at DESC").
@@ -1302,6 +1551,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"strconv"
 
@@ -1335,6 +1585,7 @@ func NewUserService(repo IUserRepository) IUserService {
 
 func (s *UserService) Register(email, password, name string) (*User, error) {
 	sh := shard.PickShard(email, s.numShards)
+	log.Printf("[user-service] Register route -> picked shard=%d for email=%s", sh, email)
 
 	// ensure uniqueness on the owning shard
 	if existing, _ := s.repo.FindByEmail(email, sh); existing != nil {
@@ -1363,6 +1614,8 @@ func (s *UserService) Register(email, password, name string) (*User, error) {
 
 func (s *UserService) Login(email, password string) (*User, error) {
 	sh := shard.PickShard(email, s.numShards)
+	log.Printf("[user-service] Login route -> picked shard=%d for email=%s", sh, email)
+
 	usr, err := s.repo.FindByEmail(email, sh)
 	if err != nil {
 		return nil, errors.New("wrong credentials")
@@ -1378,6 +1631,10 @@ func (s *UserService) ListAll(shardID int) ([]User, error) {
 }
 
 func (s *UserService) GetByUserID(uid string) (*User, error) {
+	sh, ok := shard.ExtractShard(uid)
+	if ok {
+		log.Printf("[user-service] GetByUserID -> extracted shard=%d from user_id=%s", sh, uid)
+	}
 	return s.repo.FindByUserID(uid)
 }
 
@@ -1388,6 +1645,7 @@ func (s *UserService) ListShard(shardID, limit, offset int) ([]User, error) {
 	if offset < 0 {
 		offset = 0
 	}
+	log.Printf("[user-service] ListShard -> shard=%d limit=%d offset=%d", shardID, limit, offset)
 	return s.repo.FindAllByShardPaged(shardID, limit, offset)
 }
 
