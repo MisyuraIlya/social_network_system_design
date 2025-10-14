@@ -1,52 +1,26 @@
 package media
 
 import (
-	"io"
-	"mime/multipart"
-	"os"
-	"path/filepath"
+	"fmt"
+	"path"
+	"strings"
+	"time"
+
+	"media-service/internal/storage/s3"
 )
 
-type IMediaService interface {
-	Upload(file multipart.File, header *multipart.FileHeader) (*Media, error)
-	Get(id uint) (*Media, error)
+type Service struct {
+	s3 *s3.Storage
 }
 
-type MediaService struct {
-	repo        IMediaRepository
-	storagePath string
-}
+func NewService(s *s3.Storage) *Service { return &Service{s3: s} }
 
-func NewMediaService(r IMediaRepository, storagePath string) IMediaService {
-	return &MediaService{
-		repo:        r,
-		storagePath: storagePath,
+func (s *Service) BuildKey(prefix, filename string, userID string) string {
+	fn := path.Base(filename)
+	now := time.Now().UTC().Format("20060102T150405")
+	p := strings.Trim(prefix, "/")
+	if p != "" {
+		return fmt.Sprintf("%s/%s_%s_%s", p, userID, now, fn)
 	}
-}
-
-func (s *MediaService) Upload(file multipart.File, header *multipart.FileHeader) (*Media, error) {
-	filename := header.Filename
-	outPath := filepath.Join(s.storagePath, filename)
-
-	outFile, err := os.Create(outPath)
-	if err != nil {
-		return nil, err
-	}
-	defer outFile.Close()
-
-	size, err := io.Copy(outFile, file)
-	if err != nil {
-		return nil, err
-	}
-
-	media := &Media{
-		FileName:    filename,
-		ContentType: header.Header.Get("Content-Type"),
-		Size:        size,
-	}
-	return s.repo.Create(media)
-}
-
-func (s *MediaService) Get(id uint) (*Media, error) {
-	return s.repo.FindByID(id)
+	return fmt.Sprintf("%s_%s_%s", userID, now, fn)
 }
