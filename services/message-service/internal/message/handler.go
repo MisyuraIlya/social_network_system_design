@@ -1,88 +1,99 @@
 package message
 
 import (
-	"encoding/json"
+	"io"
 	"net/http"
 	"strconv"
+
+	"message-service/internal/shared/httpx"
+	"message-service/internal/shared/validate"
 )
 
-type MessageHandler struct {
-	Service IMessageService
-}
+type Handler struct{ svc Service }
 
-func NewMessageHandler(svc IMessageService) *MessageHandler {
-	return &MessageHandler{Service: svc}
-}
+func NewHandler(s Service) *Handler { return &Handler{svc: s} }
 
-func RegisterRoutes(mux *http.ServeMux, handler *MessageHandler) {
-	mux.HandleFunc("/messages", func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodPost:
-			handler.SendMessage(w, r)
-		case http.MethodGet:
-			handler.GetMessages(w, r)
-		default:
-			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-		}
-	})
-}
-
-func (h *MessageHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
-	var req SendMessageRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid JSON: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	msg, err := h.Service.SendMessage(req.DialogID, req.SenderID, req.Content)
+func (h *Handler) Send(w http.ResponseWriter, r *http.Request) error {
+	uid, err := httpx.UserFromCtx(r)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return err
 	}
-
-	resp := SendMessageResponse{
-		ID:        msg.ID,
-		DialogID:  msg.DialogID,
-		SenderID:  msg.SenderID,
-		Content:   msg.Content,
-		CreatedAt: msg.CreatedAt,
+	in, err := httpx.Decode[SendReq](r)
+	if err != nil {
+		return err
 	}
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(resp)
+	if err := validate.Struct(in); err != nil {
+		return err
+	}
+	m, err := h.svc.Send(r.Context(), uid, in)
+	if err != nil {
+		return err
+	}
+	httpx.WriteJSON(w, m, http.StatusCreated)
+	return nil
 }
 
-func (h *MessageHandler) GetMessages(w http.ResponseWriter, r *http.Request) {
-	dialogIDStr := r.URL.Query().Get("dialogId")
-	if dialogIDStr == "" {
-		http.Error(w, "dialogId is required", http.StatusBadRequest)
-		return
-	}
-
-	dialogID, err := strconv.Atoi(dialogIDStr)
-	if err != nil || dialogID <= 0 {
-		http.Error(w, "invalid dialogId", http.StatusBadRequest)
-		return
-	}
-
-	messages, err := h.Service.GetMessages(uint(dialogID))
+func (h *Handler) UploadAndSend(w http.ResponseWriter, r *http.Request) error {
+	uid, err := httpx.UserFromCtx(r)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return err
 	}
-
-	data := make([]MessageData, 0, len(messages))
-	for _, m := range messages {
-		data = append(data, MessageData{
-			ID:        m.ID,
-			DialogID:  m.DialogID,
-			SenderID:  m.SenderID,
-			Content:   m.Content,
-			CreatedAt: m.CreatedAt,
-			UpdatedAt: m.UpdatedAt,
-		})
+	if err := r.ParseMultipartForm(10 << 20); err != nil {
+		return err
 	}
+	f, fh, err := r.FormFile("file")
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	data, _ := io.ReadAll(f)
+	chatID, _ := strconv.ParseInt(r.FormValue("chat_id"), 10, 64)
+	text := r.FormValue("text")
+	m, err := h.svc.SendWithUpload(r.Context(), uid, chatID, fh.Filename, data, text)
+	if err != nil {
+		return err
+	}
+	httpx.WriteJSON(w, m, http.StatusCreated)
+	return nil
+}
 
-	resp := GetMessagesResponse{Messages: data}
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(resp)
+func (h *Handler) ListByChat(w http.ResponseWriter, r *http.Request) error {
+	_, err := httpx.UserFromCtx(r)
+	if err != nil {
+		return err
+	}
+	cid, _ := strconv.ParseInt(r.PathValue("chat_id"), 10, 64)
+	limit := qint(r, "limit", 50)
+	offset := qint(r, "offset", 0)
+	items, err := h.svc.ListByChat(cid, limit, offset)
+	if err != nil {
+		return err
+	}
+	httpx.WriteJSON(w, map[string]any{"items": items, "limit": limit, "offset": offset}, http.StatusOK)
+	return nil
+}
+
+func (h *Handler) MarkSeen(w http.ResponseWriter, r *http.Request) error {
+	uid, err := httpx.UserFromCtx(r)
+	if err != nil {
+		return err
+	}
+	mid, _ := strconv.ParseInt(r.PathValue("message_id"), 10, 64)
+	if err := h.svc.MarkSeen(mid, uid); err != nil {
+		return err
+	}
+	httpx.WriteJSON(w, map[string]string{"status": "ok"}, http.StatusOK)
+	return nil
+}
+
+func qint(r *http.Request, key string, def int) int {
+	s := r.URL.Query().Get(key)
+	if s == "" {
+		return def
+	}
+	n, _ := strconv.Atoi(s)
+	if n <= 0 {
+		return def
+	}
+	return n
 }

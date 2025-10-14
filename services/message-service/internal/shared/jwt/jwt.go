@@ -1,0 +1,32 @@
+package jwt
+
+import (
+	"errors"
+	"os"
+
+	jw "github.com/golang-jwt/jwt/v5"
+)
+
+func secret() []byte {
+	if s := os.Getenv("JWT_SECRET"); s != "" {
+		return []byte(s)
+	}
+	return []byte("replace-this-with-a-strong-secret")
+}
+
+// Parse returns userID from the token (we only need "sub")
+func Parse(tok string) (string, error) {
+	t, err := jw.Parse(tok, func(t *jw.Token) (any, error) { return secret(), nil })
+	if err != nil || !t.Valid {
+		return "", errors.New("invalid token")
+	}
+	mc, ok := t.Claims.(jw.MapClaims)
+	if !ok {
+		return "", errors.New("bad claims")
+	}
+	uid, _ := mc["sub"].(string)
+	if uid == "" {
+		return "", errors.New("missing sub")
+	}
+	return uid, nil
+}

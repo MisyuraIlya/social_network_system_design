@@ -1,33 +1,36 @@
 package message
 
-import "gorm.io/gorm"
+import (
+	"message-service/internal/shared/db"
+)
 
-type IMessageRepository interface {
-	Create(msg *Message) (*Message, error)
-	FindByDialogID(dialogID uint) ([]Message, error)
+type Repository interface {
+	Create(m *Message) (*Message, error)
+	MarkSeen(messageID int64, userID string) error
+	ListByChat(chatID int64, limit, offset int) ([]Message, error)
 }
 
-type MessageRepository struct {
-	DB *gorm.DB
-}
+type repo struct{ store *db.Store }
 
-func NewMessageRepository(db *gorm.DB) IMessageRepository {
-	return &MessageRepository{DB: db}
-}
+func NewRepository(s *db.Store) Repository { return &repo{store: s} }
 
-func (repo *MessageRepository) Create(msg *Message) (*Message, error) {
-	if err := repo.DB.Create(msg).Error; err != nil {
+func (r *repo) Create(m *Message) (*Message, error) {
+	if err := r.store.Base.Create(m).Error; err != nil {
 		return nil, err
 	}
-	return msg, nil
+	return m, nil
 }
 
-func (repo *MessageRepository) FindByDialogID(dialogID uint) ([]Message, error) {
-	var messages []Message
-	if err := repo.DB.Where("dialog_id = ?", dialogID).
-		Order("created_at asc").
-		Find(&messages).Error; err != nil {
-		return nil, err
-	}
-	return messages, nil
+func (r *repo) MarkSeen(messageID int64, userID string) error {
+	return r.store.Base.Model(&Message{}).Where("id=? AND user_id=?", messageID, userID).
+		Update("is_seen", true).Error
+}
+
+func (r *repo) ListByChat(chatID int64, limit, offset int) ([]Message, error) {
+	var out []Message
+	err := r.store.Base.
+		Where("chat_id = ?", chatID).
+		Order("id DESC").Limit(limit).Offset(offset).
+		Find(&out).Error
+	return out, err
 }

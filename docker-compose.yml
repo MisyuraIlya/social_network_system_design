@@ -498,18 +498,40 @@ services:
   feedback-service:
     container_name: feedback-service
     build: ./services/feedback-service
+    volumes:
+      - ./services/feedback-service:/app
     environment:
       DB_HOST: feedback-db
       DB_USER: feedback
       DB_PASSWORD: feedbackpass
       DB_NAME: feedback_db
       REDIS_HOST: redis-feedback
-      REDIS_PORT: 6379
+      REDIS_PORT: "6379"
+
+      APP_PORT: ":8084"
+      AUTO_MIGRATE: "true"
+      JWT_SECRET: "super-long-random-secret"
+
+      OTEL_EXPORTER_OTLP_ENDPOINT: "otel-collector:4318"
+      OTEL_TRACES_SAMPLER: "parentbased_traceidratio"
+      OTEL_TRACES_SAMPLER_ARG: "1.0"
+      OTEL_RESOURCE_ATTRIBUTES: "service.name=feedback-service,service.version=1.0.0,env=local"
+      OTEL_SERVICE_NAME: "feedback-service"
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "http://otel-collector:4318/v1/traces"
+      OTEL_EXPORTER_OTLP_PROTOCOL: "http/protobuf"
+      OTEL_EXPORTER_OTLP_TRACES_PROTOCOL: "http/protobuf"
+
+      AIR_WATCHER_FORCE_POLLING: "true"
+      AIR_TMP_DIR: "/app/tmp"
     depends_on:
-      feedback-db:
-        condition: service_healthy
-      redis-feedback:
-        condition: service_healthy
+      feedback-db: { condition: service_healthy }
+      redis-feedback: { condition: service_healthy }
+      otel-collector: { condition: service_started }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8084/metrics >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
     networks:
       socialnet: {}
     ports:
@@ -518,25 +540,44 @@ services:
   message-service:
     container_name: message-service
     build: ./services/message-service
+    volumes:
+      - ./services/message-service:/app
     environment:
       DB_HOST: message-db
       DB_USER: notify
       DB_PASSWORD: notifypass
       DB_NAME: message_db
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       REDIS_HOST: redis-message
-      REDIS_PORT: 6379
+      REDIS_PORT: "6379"
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC_MESSAGES: messages.new
+      APP_PORT: ":8085"
+      AUTO_MIGRATE: "true"                 
+      JWT_SECRET: "super-long-random-secret"
+      MEDIA_SERVICE_URL: http://media-service:8088
+      OTEL_EXPORTER_OTLP_ENDPOINT: "otel-collector:4318"
+      OTEL_TRACES_SAMPLER: "parentbased_traceidratio"
+      OTEL_TRACES_SAMPLER_ARG: "1.0"
+      OTEL_RESOURCE_ATTRIBUTES: "service.name=message-service,service.version=1.0.0,env=local"
+      OTEL_SERVICE_NAME: "message-service"
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "http://otel-collector:4318/v1/traces"
+      OTEL_EXPORTER_OTLP_PROTOCOL: "http/protobuf"
+      OTEL_EXPORTER_OTLP_TRACES_PROTOCOL: "http/protobuf"
     depends_on:
-      message-db:
-        condition: service_healthy
-      kafka:
-        condition: service_healthy
-      redis-message:
-        condition: service_healthy
+      message-db: { condition: service_healthy }
+      kafka:      { condition: service_healthy }
+      redis-message: { condition: service_healthy }
+      otel-collector: { condition: service_started }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8085/metrics >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
     networks:
       socialnet: {}
     ports:
       - "8085:8085"
+
 
   notification-service:
     container_name: notification-service

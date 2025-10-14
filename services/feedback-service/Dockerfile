@@ -1,12 +1,12 @@
-FROM golang:1.25-alpine AS builder
+# services/user-service/Dockerfile
+FROM golang:1.25-alpine
 WORKDIR /app
+
+RUN apk add --no-cache git curl bash
+RUN go install github.com/air-verse/air@latest
+
 COPY go.mod go.sum ./
 RUN go mod download
-COPY . .
-RUN CGO_ENABLED=0 go build -o service cmd/main.go
 
-FROM alpine:3.16
-WORKDIR /app
-COPY --from=builder /app/service /app/service
-EXPOSE 8086
-CMD ["/app/service"]
+# Call the binary directly
+CMD ["/go/bin/air", "-c", "/app/.air.toml"]
