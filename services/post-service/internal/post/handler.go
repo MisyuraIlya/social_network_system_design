@@ -1,84 +1,106 @@
 package post
 
 import (
-	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
+
+	"post-service/internal/shared/httpx"
+	"post-service/internal/shared/validate"
 )
 
-type PostHandler struct {
-	Service IPostService
-}
+type Handler struct{ svc Service }
 
-func NewPostHandler(svc IPostService) *PostHandler {
-	return &PostHandler{Service: svc}
-}
+func NewHandler(s Service) *Handler { return &Handler{svc: s} }
 
-func RegisterRoutes(mux *http.ServeMux, handler *PostHandler) {
-	mux.HandleFunc("/posts", func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			handler.ListPosts(w, r)
-		case http.MethodPost:
-			handler.Create(w, r)
-		default:
-			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-		}
-	})
-
-	mux.HandleFunc("/posts/", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-		if len(pathParts) < 2 {
-			http.Error(w, "Post ID missing", http.StatusBadRequest)
-			return
-		}
-		idStr := pathParts[1]
-		handler.GetPost(w, r, idStr)
-	})
-}
-
-func (h *PostHandler) ListPosts(w http.ResponseWriter, r *http.Request) {
-	posts, err := h.Service.ListPosts()
+func (h *Handler) Create(w http.ResponseWriter, r *http.Request) error {
+	uid, err := httpx.UserFromCtx(r)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return err
 	}
-	json.NewEncoder(w).Encode(posts)
+	in, err := httpx.Decode[CreateReq](r)
+	if err != nil {
+		return err
+	}
+	if err := validate.Struct(in); err != nil {
+		return err
+	}
+	p, err := h.svc.Create(uid, in)
+	if err != nil {
+		return err
+	}
+	httpx.WriteJSON(w, p, http.StatusCreated)
+	return nil
 }
 
-func (h *PostHandler) Create(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		UserID  uint   `json:"userId"`
-		Content string `json:"content"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	post, err := h.Service.CreatePost(body.UserID, body.Content)
+func (h *Handler) UploadAndCreate(w http.ResponseWriter, r *http.Request) error {
+	uid, err := httpx.UserFromCtx(r)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return err
 	}
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(post)
+	if err := r.ParseMultipartForm(20 << 20); err != nil { // 20MB
+		return err
+	}
+	file, hdr, err := r.FormFile("file")
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	description := strings.TrimSpace(r.FormValue("description"))
+	tags := strings.Split(strings.TrimSpace(r.FormValue("tags")), ",")
+	if len(tags) == 1 && tags[0] == "" {
+		tags = nil
+	}
+
+	p, err := h.svc.UploadAndCreate(uid, hdr.Filename, file, description, tags)
+	if err != nil {
+		return err
+	}
+	httpx.WriteJSON(w, p, http.StatusCreated)
+	return nil
 }
 
-func (h *PostHandler) GetPost(w http.ResponseWriter, r *http.Request, idStr string) {
-	id, err := strconv.Atoi(idStr)
+func (h *Handler) GetByID(w http.ResponseWriter, r *http.Request) error {
+	id, _ := strconv.ParseUint(r.PathValue("post_id"), 10, 64)
+	p, err := h.svc.GetByID(id)
 	if err != nil {
-		http.Error(w, "invalid post ID", http.StatusBadRequest)
-		return
+		return err
 	}
-	post, err := h.Service.GetPost(uint(id))
+	httpx.WriteJSON(w, p, http.StatusOK)
+	return nil
+}
+
+func (h *Handler) ListByUser(w http.ResponseWriter, r *http.Request) error {
+	uid := r.PathValue("user_id")
+	limit := httpx.QueryInt(r, "limit", 50)
+	offset := httpx.QueryInt(r, "offset", 0)
+	items, err := h.svc.ListByUser(uid, limit, offset)
 	if err != nil {
-		http.Error(w, "Post not found", http.StatusNotFound)
-		return
+		return err
 	}
-	json.NewEncoder(w).Encode(post)
+	httpx.WriteJSON(w, map[string]any{"items": items, "limit": limit, "offset": offset}, http.StatusOK)
+	return nil
+}
+
+func (h *Handler) Like(w http.ResponseWriter, r *http.Request) error {
+	uid, err := httpx.UserFromCtx(r)
+	if err != nil {
+		return err
+	}
+	id, _ := strconv.ParseUint(r.PathValue("post_id"), 10, 64)
+	if err := h.svc.Like(uid, id); err != nil {
+		return err
+	}
+	httpx.WriteJSON(w, map[string]string{"status": "ok"}, http.StatusOK)
+	return nil
+}
+
+func (h *Handler) AddView(w http.ResponseWriter, r *http.Request) error {
+	id, _ := strconv.ParseUint(r.PathValue("post_id"), 10, 64)
+	if err := h.svc.AddView(id); err != nil {
+		return err
+	}
+	httpx.WriteJSON(w, map[string]string{"status": "ok"}, http.StatusOK)
+	return nil
 }

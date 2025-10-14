@@ -1,31 +1,126 @@
 package post
 
-type IPostService interface {
-	CreatePost(userID uint, content string) (*Post, error)
-	GetPost(id uint) (*Post, error)
-	ListPosts() ([]Post, error)
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"mime/multipart"
+	"net/http"
+	"os"
+	"time"
+
+	"post-service/internal/kafka"
+	"post-service/internal/shared/validate"
+	"post-service/internal/tag"
+)
+
+type Service interface {
+	Create(uid string, in CreateReq) (*Post, error)
+	GetByID(id uint64) (*Post, error)
+	ListByUser(userID string, limit, offset int) ([]Post, error)
+	Like(uid string, postID uint64) error
+	AddView(postID uint64) error
+	UploadAndCreate(uid string, filename string, file io.Reader, description string, tags []string) (*Post, error)
 }
 
-type PostService struct {
-	repo IPostRepository
+type service struct {
+	repo  Repository
+	tags  tag.Service
+	kafka kafka.Writer
 }
 
-func NewPostService(r IPostRepository) IPostService {
-	return &PostService{repo: r}
+func NewService(r Repository, t tag.Service, kw kafka.Writer) Service {
+	return &service{repo: r, tags: t, kafka: kw}
 }
 
-func (s *PostService) CreatePost(userID uint, content string) (*Post, error) {
-	post := &Post{
-		UserID:  userID,
-		Content: content,
+func (s *service) Create(uid string, in CreateReq) (*Post, error) {
+	if err := validate.Struct(in); err != nil {
+		return nil, err
 	}
-	return s.repo.Create(post)
+	p := &Post{
+		UserID: uid, Description: in.Description, MediaURL: in.MediaURL,
+		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}
+	out, err := s.repo.Create(p)
+	if err != nil {
+		return nil, err
+	}
+	tgs, err := s.tags.Ensure(in.Tags)
+	if err != nil {
+		return nil, err
+	}
+	if len(tgs) > 0 {
+		ids := make([]uint64, 0, len(tgs))
+		for _, t := range tgs {
+			ids = append(ids, t.ID)
+		}
+		if err := s.repo.AttachTags(out.ID, ids); err != nil {
+			return nil, err
+		}
+	}
+	_ = s.kafka.WriteJSON(context.Background(), map[string]any{
+		"type": "post.created",
+		"ts":   time.Now().Unix(),
+		"post": map[string]any{
+			"id": out.ID, "user_id": out.UserID, "description": out.Description, "media": out.MediaURL,
+		},
+		"tags": in.Tags,
+	})
+	return out, nil
 }
 
-func (s *PostService) GetPost(id uint) (*Post, error) {
-	return s.repo.FindByID(id)
+func (s *service) GetByID(id uint64) (*Post, error) { return s.repo.GetByID(id) }
+func (s *service) ListByUser(userID string, limit, offset int) ([]Post, error) {
+	return s.repo.ListByUser(userID, limit, offset)
 }
 
-func (s *PostService) ListPosts() ([]Post, error) {
-	return s.repo.ListAll()
+func (s *service) Like(uid string, postID uint64) error {
+	_ = uid
+	return s.repo.IncLike(postID)
+}
+func (s *service) AddView(postID uint64) error { return s.repo.IncView(postID) }
+
+func (s *service) UploadAndCreate(uid, filename string, file io.Reader, description string, tags []string) (*Post, error) {
+	mediaURL, err := uploadToMediaService(filename, file)
+	if err != nil {
+		return nil, err
+	}
+	return s.Create(uid, CreateReq{Description: description, MediaURL: mediaURL, Tags: tags})
+}
+
+func uploadToMediaService(filename string, r io.Reader) (string, error) {
+	base := os.Getenv("MEDIA_SERVICE_URL")
+	if base == "" {
+		base = "http://media-service:8088"
+	}
+	var body bytes.Buffer
+	w := multipart.NewWriter(&body)
+	fw, _ := w.CreateFormFile("file", filename)
+	if _, err := io.Copy(fw, r); err != nil {
+		return "", err
+	}
+	_ = w.Close()
+
+	req, _ := http.NewRequest("POST", fmt.Sprintf("%s/upload", base), &body)
+	req.Header.Set("Content-Type", w.FormDataContentType())
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("media-service: %s", string(b))
+	}
+	type out struct {
+		URL string `json:"url"`
+	}
+	var o out
+	if err := json.NewDecoder(resp.Body).Decode(&o); err != nil {
+		return "", err
+	}
+	return o.URL, nil
 }
