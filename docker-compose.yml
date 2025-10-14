@@ -582,15 +582,32 @@ services:
   notification-service:
     container_name: notification-service
     build: ./services/notification-service
+    volumes:
+      - ./services/notification-service:/app
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPICS: messages.new,posts.created
+      KAFKA_GROUP_ID: notification-service
+      REDIS_HOST: redis-message
+      REDIS_PORT: "6379"
+      APP_PORT: ":8086"
+      JWT_SECRET: "super-long-random-secret"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "otel-collector:4318"
+      OTEL_SERVICE_NAME: "notification-service"
+      AIR_WATCHER_FORCE_POLLING: "true"
+      AIR_TMP_DIR: "/app/tmp"
     depends_on:
-      kafka:
-        condition: service_healthy
-    networks:
-      socialnet: {}
-    ports:
-      - "8086:8086"
+      kafka: { condition: service_healthy }
+      redis-message: { condition: service_healthy }
+      otel-collector: { condition: service_started }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8086/healthz >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    networks: { socialnet: {} }
+    ports: ["8086:8086"]
+
 
   media-service:
     container_name: media-service
