@@ -15,6 +15,9 @@ type Service interface {
 	ListMine(userID string, limit, offset int) ([]Chat, error)
 	IncPopular(ctx context.Context, chatID int64)
 	TopPopular(ctx context.Context, n int64) ([]int64, error)
+
+	// NEW:
+	IsMember(chatID int64, userID string) (bool, error)
 }
 
 type service struct {
@@ -53,4 +56,8 @@ func (s *service) ListMine(userID string, limit, offset int) ([]Chat, error) {
 func (s *service) IncPopular(ctx context.Context, chatID int64) { s.rds.IncPopular(ctx, chatID) }
 func (s *service) TopPopular(ctx context.Context, n int64) ([]int64, error) {
 	return s.rds.TopPopular(ctx, n)
+}
+
+func (s *service) IsMember(chatID int64, userID string) (bool, error) {
+	return s.repo.IsMember(chatID, userID)
 }

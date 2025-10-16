@@ -3,6 +3,7 @@ package message
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strconv"
 	"time"
 
@@ -16,7 +17,7 @@ type Service interface {
 	Send(ctx context.Context, userID string, in SendReq) (*Message, error)
 	SendWithUpload(ctx context.Context, userID string, chatID int64, fileName string, fileData []byte, text string, bearer string) (*Message, error)
 	MarkSeen(messageID int64, userID string) error
-	ListByChat(chatID int64, limit, offset int) ([]Message, error)
+	ListByChat(userID string, chatID int64, limit, offset int) ([]Message, error)
 }
 
 type service struct {
@@ -31,14 +32,23 @@ func NewService(r Repository, cs chat.Service, rds *redisx.Client, kw *kafka.Wri
 	return &service{repo: r, chats: cs, rds: rds, kafka: kw, media: mc}
 }
 
+var errForbidden = errors.New("forbidden") // simple sentinel
+
 func (s *service) Send(ctx context.Context, userID string, in SendReq) (*Message, error) {
-	// ensure chat exists
 	if _, err := s.chats.GetByID(in.ChatID); err != nil {
 		return nil, err
 	}
+	if ok, err := s.chats.IsMember(in.ChatID, userID); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, errForbidden
+	}
+
 	m := &Message{
-		UserID: userID, ChatID: in.ChatID,
-		Text: in.Text, MediaURL: in.MediaURL,
+		UserID:   userID,
+		ChatID:   in.ChatID,
+		Text:     in.Text,
+		MediaURL: in.MediaURL,
 		SendTime: time.Now(),
 	}
 	res, err := s.repo.Create(m)
@@ -46,7 +56,6 @@ func (s *service) Send(ctx context.Context, userID string, in SendReq) (*Message
 		return nil, err
 	}
 
-	// side effects: popularity + kafka event
 	s.chats.IncPopular(ctx, in.ChatID)
 	_ = s.emit(res)
 
@@ -54,6 +63,16 @@ func (s *service) Send(ctx context.Context, userID string, in SendReq) (*Message
 }
 
 func (s *service) SendWithUpload(ctx context.Context, userID string, chatID int64, fileName string, data []byte, text string, bearer string) (*Message, error) {
+	// ensure chat exists
+	if _, err := s.chats.GetByID(chatID); err != nil {
+		return nil, err
+	}
+	if ok, err := s.chats.IsMember(chatID, userID); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, errForbidden
+	}
+
 	url, err := s.media.Upload("file", fileName, bytesReader(data), bearer)
 	if err != nil {
 		return nil, err
@@ -62,10 +81,24 @@ func (s *service) SendWithUpload(ctx context.Context, userID string, chatID int6
 }
 
 func (s *service) MarkSeen(messageID int64, userID string) error {
+	m, err := s.repo.GetByID(messageID)
+	if err != nil {
+		return err
+	}
+	if ok, err := s.chats.IsMember(m.ChatID, userID); err != nil {
+		return err
+	} else if !ok {
+		return errForbidden
+	}
 	return s.repo.MarkSeen(messageID, userID)
 }
 
-func (s *service) ListByChat(chatID int64, limit, offset int) ([]Message, error) {
+func (s *service) ListByChat(userID string, chatID int64, limit, offset int) ([]Message, error) {
+	if ok, err := s.chats.IsMember(chatID, userID); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, errForbidden
+	}
 	return s.repo.ListByChat(chatID, limit, offset)
 }
 

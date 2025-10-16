@@ -12,6 +12,9 @@ type Repository interface {
 	Create(m *Message) (*Message, error)
 	MarkSeen(messageID int64, userID string) error
 	ListByChat(chatID int64, limit, offset int) ([]Message, error)
+
+	// NEW:
+	GetByID(messageID int64) (*Message, error)
 }
 
 type repo struct{ store *db.Store }
@@ -46,4 +49,12 @@ func (r *repo) ListByChat(chatID int64, limit, offset int) ([]Message, error) {
 		Order("id DESC").Limit(limit).Offset(offset).
 		Find(&out).Error
 	return out, err
+}
+
+func (r *repo) GetByID(messageID int64) (*Message, error) {
+	var m Message
+	if err := r.store.Base.First(&m, "id = ?", messageID).Error; err != nil {
+		return nil, err
+	}
+	return &m, nil
 }

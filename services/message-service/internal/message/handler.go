@@ -59,14 +59,15 @@ func (h *Handler) UploadAndSend(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (h *Handler) ListByChat(w http.ResponseWriter, r *http.Request) error {
-	_, err := httpx.UserFromCtx(r)
+	uid, err := httpx.UserFromCtx(r)
 	if err != nil {
 		return err
 	}
 	cid, _ := strconv.ParseInt(r.PathValue("chat_id"), 10, 64)
 	limit := qint(r, "limit", 50)
 	offset := qint(r, "offset", 0)
-	items, err := h.svc.ListByChat(cid, limit, offset)
+
+	items, err := h.svc.ListByChat(uid, cid, limit, offset)
 	if err != nil {
 		return err
 	}

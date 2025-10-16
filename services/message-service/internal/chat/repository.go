@@ -12,6 +12,7 @@ type Repository interface {
 	AddUser(chatID int64, userID, typ string) error
 	RemoveUser(chatID int64, userID string) error
 	ListByUser(userID string, limit, offset int) ([]Chat, error)
+	IsMember(chatID int64, userID string) (bool, error)
 }
 
 type repo struct{ store *db.Store }
@@ -50,9 +51,20 @@ func (r *repo) ListByUser(userID string, limit, offset int) ([]Chat, error) {
 	var out []Chat
 	err := r.store.Base.
 		Joins("JOIN chat_users cu ON cu.chat_id = chats.id AND cu.user_id = ?", userID).
-		Order("chats.created_at DESC").Limit(limit).Offset(offset).
+		Order("created_at DESC").Limit(limit).Offset(offset).
 		Find(&out).Error
 	return out, err
+}
+
+func (r *repo) IsMember(chatID int64, userID string) (bool, error) {
+	var n int64
+	if err := r.store.Base.
+		Model(&ChatUser{}).
+		Where("chat_id = ? AND user_id = ?", chatID, userID).
+		Count(&n).Error; err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 var _ = gorm.ErrRecordNotFound
