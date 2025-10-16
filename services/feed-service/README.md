@@ -1,4 +1,9 @@
-services/feed-service/cmd/app/main.go
+# Project code dump
+
+- Generated: 2025-10-16 15:32:53+0300
+- Root: `/home/ilya/projects/social_network_system_design/services/feed-service`
+
+cmd/app/main.go
 package main
 
 import (
@@ -141,206 +146,7 @@ func main() {
 	log.Fatal(srv.ListenAndServe())
 }
 
-
-services/feed-service/internal/shared/httpx/httpx.go
-package httpx
-
-import (
-	"context"
-	"encoding/json"
-	"errors"
-	"net/http"
-	"strconv"
-	"strings"
-
-	"feed-service/internal/shared/jwt"
-)
-
-type HandlerFunc func(http.ResponseWriter, *http.Request) error
-
-func Wrap(fn HandlerFunc) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := fn(w, r); err != nil {
-			code := http.StatusBadRequest
-			if errors.Is(err, ErrUnauthorized) {
-				code = http.StatusUnauthorized
-			}
-			WriteJSON(w, map[string]any{"error": err.Error()}, code)
-		}
-	})
-}
-
-func Decode[T any](r *http.Request) (T, error) {
-	var t T
-	err := json.NewDecoder(r.Body).Decode(&t)
-	return t, err
-}
-
-func WriteJSON(w http.ResponseWriter, v any, code int) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(v)
-}
-
-var (
-	ctxUserIDKey    = "httpx.user_id"
-	ErrUnauthorized = errors.New("unauthorized")
-)
-
-func BearerToken(r *http.Request) string {
-	h := r.Header.Get("Authorization")
-	if strings.HasPrefix(h, "Bearer ") {
-		return strings.TrimSpace(h[7:])
-	}
-	return ""
-}
-
-func AuthMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		tok := BearerToken(r)
-		if tok == "" {
-			WriteJSON(w, map[string]any{"error": "unauthorized", "reason": "missing bearer"}, http.StatusUnauthorized)
-			return
-		}
-		uid, err := jwt.Parse(tok)
-		if err != nil || uid == "" {
-			WriteJSON(w, map[string]any{"error": "unauthorized", "reason": "bad token"}, http.StatusUnauthorized)
-			return
-		}
-		ctx := context.WithValue(r.Context(), ctxUserIDKey, uid)
-		next.ServeHTTP(w, r.WithContext(ctx))
-	})
-}
-
-func UserFromCtx(r *http.Request) (string, error) {
-	uid, _ := r.Context().Value(ctxUserIDKey).(string)
-	if uid == "" {
-		return "", ErrUnauthorized
-	}
-	return uid, nil
-}
-
-func QueryInt(r *http.Request, key string, def int) int {
-	s := r.URL.Query().Get(key)
-	if s == "" {
-		return def
-	}
-	n, err := strconv.Atoi(s)
-	if err != nil {
-		return def
-	}
-	return n
-}
-
-services/feed-service/internal/shared/jwt/jwt.go
-package jwt
-
-import (
-	"errors"
-	"os"
-
-	jw "github.com/golang-jwt/jwt/v5"
-)
-
-func secret() []byte {
-	if s := os.Getenv("JWT_SECRET"); s != "" {
-		return []byte(s)
-	}
-	return []byte("replace-this-with-a-strong-secret")
-}
-
-func Parse(tok string) (string, error) {
-	t, err := jw.Parse(tok, func(t *jw.Token) (any, error) { return secret(), nil })
-	if err != nil || !t.Valid {
-		return "", errors.New("invalid token")
-	}
-	mc, ok := t.Claims.(jw.MapClaims)
-	if !ok {
-		return "", errors.New("bad claims")
-	}
-	uid, _ := mc["sub"].(string)
-	if uid == "" {
-		return "", errors.New("missing sub")
-	}
-	return uid, nil
-}
-
-services/feed-service/internal/shared/redisx/redisx.go
-package redisx
-
-import (
-	"fmt"
-	"os"
-
-	"github.com/redis/go-redis/v9"
-)
-
-func OpenFromEnv() *redis.Client {
-	host := getenv("REDIS_HOST", "redis-feed")
-	port := getenv("REDIS_PORT", "6379")
-	addr := fmt.Sprintf("%s:%s", host, port)
-	rdb := redis.NewClient(&redis.Options{
-		Addr: addr,
-	})
-	return rdb
-}
-
-func getenv(k, d string) string {
-	if v := os.Getenv(k); v != "" {
-		return v
-	}
-	return d
-}
-
-
-services/feed-service/internal/kafka/consumer.go
-package kafka
-
-import (
-	"context"
-	"encoding/json"
-	"log"
-	"strings"
-	"time"
-
-	"feed-service/internal/feed"
-
-	kf "github.com/segmentio/kafka-go"
-)
-
-type PostHandler func(ctx context.Context, ev feed.PostEvent) error
-
-func StartConsumer(ctx context.Context, bootstrap, topic, groupID string, handle PostHandler) error {
-	r := kf.NewReader(kf.ReaderConfig{
-		Brokers:  strings.Split(bootstrap, ","),
-		GroupID:  groupID,
-		Topic:    topic,
-		MinBytes: 10e3,
-		MaxBytes: 10e6,
-		MaxWait:  2 * time.Second,
-	})
-	defer r.Close()
-
-	log.Printf("kafka consumer started group=%s topic=%s", groupID, topic)
-
-	for {
-		m, err := r.ReadMessage(ctx)
-		if err != nil {
-			return err
-		}
-		var ev feed.PostEvent
-		if err := json.Unmarshal(m.Value, &ev); err != nil {
-			log.Printf("kafka: bad payload: %v", err)
-			continue
-		}
-		if err := handle(ctx, ev); err != nil {
-			log.Printf("handle post event: %v", err)
-		}
-	}
-}
-
-
-services/feed-service/internal/feed/handler.go
+internal/feed/handler.go
 package feed
 
 import (
@@ -394,7 +200,7 @@ func (h *Handler) RebuildHomeFeed(w http.ResponseWriter, r *http.Request) error 
 	return nil
 }
 
-services/feed-service/internal/feed/repository.go
+internal/feed/repository.go
 package feed
 
 import (
@@ -498,8 +304,7 @@ func (r *repo) GetHomeFeed(ctx context.Context, userID string, limit, offset int
 	return out, nil
 }
 
-
-services/feed-service/internal/feed/service.go
+internal/feed/service.go
 package feed
 
 import (
@@ -611,8 +416,7 @@ func (s *service) RebuildHomeFeed(ctx context.Context, userID, bearer string, li
 	return s.repo.StoreHomeFeed(ctx, userID, all)
 }
 
-
-services/feed-service/internal/feed/types.go
+internal/feed/types.go
 package feed
 
 import "time"
@@ -637,3 +441,200 @@ type FeedEntry struct {
 	CreatedAt time.Time `json:"created_at"`
 	Score     float64   `json:"score"`
 }
+
+internal/kafka/consumer.go
+package kafka
+
+import (
+	"context"
+	"encoding/json"
+	"log"
+	"strings"
+	"time"
+
+	"feed-service/internal/feed"
+
+	kf "github.com/segmentio/kafka-go"
+)
+
+type PostHandler func(ctx context.Context, ev feed.PostEvent) error
+
+func StartConsumer(ctx context.Context, bootstrap, topic, groupID string, handle PostHandler) error {
+	r := kf.NewReader(kf.ReaderConfig{
+		Brokers:  strings.Split(bootstrap, ","),
+		GroupID:  groupID,
+		Topic:    topic,
+		MinBytes: 10e3,
+		MaxBytes: 10e6,
+		MaxWait:  2 * time.Second,
+	})
+	defer r.Close()
+
+	log.Printf("kafka consumer started group=%s topic=%s", groupID, topic)
+
+	for {
+		m, err := r.ReadMessage(ctx)
+		if err != nil {
+			return err
+		}
+		var ev feed.PostEvent
+		if err := json.Unmarshal(m.Value, &ev); err != nil {
+			log.Printf("kafka: bad payload: %v", err)
+			continue
+		}
+		if err := handle(ctx, ev); err != nil {
+			log.Printf("handle post event: %v", err)
+		}
+	}
+}
+
+internal/shared/httpx/httpx.go
+package httpx
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"strconv"
+	"strings"
+
+	"feed-service/internal/shared/jwt"
+)
+
+type HandlerFunc func(http.ResponseWriter, *http.Request) error
+
+func Wrap(fn HandlerFunc) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := fn(w, r); err != nil {
+			code := http.StatusBadRequest
+			if errors.Is(err, ErrUnauthorized) {
+				code = http.StatusUnauthorized
+			}
+			WriteJSON(w, map[string]any{"error": err.Error()}, code)
+		}
+	})
+}
+
+func Decode[T any](r *http.Request) (T, error) {
+	var t T
+	err := json.NewDecoder(r.Body).Decode(&t)
+	return t, err
+}
+
+func WriteJSON(w http.ResponseWriter, v any, code int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+var (
+	ctxUserIDKey    = "httpx.user_id"
+	ErrUnauthorized = errors.New("unauthorized")
+)
+
+func BearerToken(r *http.Request) string {
+	h := r.Header.Get("Authorization")
+	if strings.HasPrefix(h, "Bearer ") {
+		return strings.TrimSpace(h[7:])
+	}
+	return ""
+}
+
+func AuthMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tok := BearerToken(r)
+		if tok == "" {
+			WriteJSON(w, map[string]any{"error": "unauthorized", "reason": "missing bearer"}, http.StatusUnauthorized)
+			return
+		}
+		uid, err := jwt.Parse(tok)
+		if err != nil || uid == "" {
+			WriteJSON(w, map[string]any{"error": "unauthorized", "reason": "bad token"}, http.StatusUnauthorized)
+			return
+		}
+		ctx := context.WithValue(r.Context(), ctxUserIDKey, uid)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func UserFromCtx(r *http.Request) (string, error) {
+	uid, _ := r.Context().Value(ctxUserIDKey).(string)
+	if uid == "" {
+		return "", ErrUnauthorized
+	}
+	return uid, nil
+}
+
+func QueryInt(r *http.Request, key string, def int) int {
+	s := r.URL.Query().Get(key)
+	if s == "" {
+		return def
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return def
+	}
+	return n
+}
+
+internal/shared/jwt/jwt.go
+package jwt
+
+import (
+	"errors"
+	"os"
+
+	jw "github.com/golang-jwt/jwt/v5"
+)
+
+func secret() []byte {
+	if s := os.Getenv("JWT_SECRET"); s != "" {
+		return []byte(s)
+	}
+	return []byte("replace-this-with-a-strong-secret")
+}
+
+func Parse(tok string) (string, error) {
+	t, err := jw.Parse(tok, func(t *jw.Token) (any, error) { return secret(), nil })
+	if err != nil || !t.Valid {
+		return "", errors.New("invalid token")
+	}
+	mc, ok := t.Claims.(jw.MapClaims)
+	if !ok {
+		return "", errors.New("bad claims")
+	}
+	uid, _ := mc["sub"].(string)
+	if uid == "" {
+		return "", errors.New("missing sub")
+	}
+	return uid, nil
+}
+
+internal/shared/redisx/redisx.go
+package redisx
+
+import (
+	"fmt"
+	"os"
+
+	"github.com/redis/go-redis/v9"
+)
+
+func OpenFromEnv() *redis.Client {
+	host := getenv("REDIS_HOST", "redis-feed")
+	port := getenv("REDIS_PORT", "6379")
+	addr := fmt.Sprintf("%s:%s", host, port)
+	rdb := redis.NewClient(&redis.Options{
+		Addr: addr,
+	})
+	return rdb
+}
+
+func getenv(k, d string) string {
+	if v := os.Getenv(k); v != "" {
+		return v
+	}
+	return d
+}
+

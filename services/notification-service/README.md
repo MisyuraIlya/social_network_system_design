@@ -1,4 +1,9 @@
-services/notification-service/cmd/app/main.go
+# Project code dump
+
+- Generated: 2025-10-16 15:32:54+0300
+- Root: `/home/ilya/projects/social_network_system_design/services/notification-service`
+
+cmd/app/main.go
 package main
 
 import (
@@ -6,8 +11,9 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
-	"message-service/internal/config"
 	"net/http"
+	"strconv"
+
 	"os"
 	"os/signal"
 	"strings"
@@ -28,7 +34,7 @@ import (
 )
 
 func initOTEL(ctx context.Context) func(context.Context) error {
-	endpoint := config.GetEnv("OTEL_EXPORTER_OTLP_ENDPOINT", "otel-collector:4318")
+	endpoint := envOr("OTEL_EXPORTER_OTLP_ENDPOINT", "otel-collector:4318")
 	exp, err := otlptracehttp.New(
 		ctx,
 		otlptracehttp.WithEndpoint(endpoint),
@@ -38,8 +44,8 @@ func initOTEL(ctx context.Context) func(context.Context) error {
 		log.Fatalf("otel exporter: %v", err)
 	}
 
-	svcName := config.GetEnv("OTEL_SERVICE_NAME", "notification-service")
-	env := config.GetEnv("ENV", "local")
+	svcName := envOr("OTEL_SERVICE_NAME", "notification-service")
+	env := envOr("ENV", "local")
 
 	res, _ := resource.Merge(
 		resource.Default(),
@@ -52,7 +58,7 @@ func initOTEL(ctx context.Context) func(context.Context) error {
 
 	ratio := 1.0
 	if s := os.Getenv("OTEL_TRACES_SAMPLER_ARG"); s != "" {
-		if f, e := strconvParseFloatSafe(s); e == nil && f >= 0 && f <= 1 {
+		if f, e := strconv.ParseFloat(s, 64); e == nil && f >= 0 && f <= 1 {
 			ratio = f
 		}
 	}
@@ -70,26 +76,17 @@ func initOTEL(ctx context.Context) func(context.Context) error {
 	return tp.Shutdown
 }
 
-func strconvParseFloatSafe(s string) (float64, error) {
-	var f float64
-	_, err := fmtSscanf(s, "%f", &f)
-	return f, err
-}
-
-func fmtSscanf(str, format string, a ...any) (int, error) {
-	return 0, errors.New("fmt sscanf proxy not implemented")
-}
-
 type MessageEvent struct {
 	MessageID int64     `json:"message_id"`
 	ChatID    int64     `json:"chat_id"`
-	SenderID  int64     `json:"sender_id"`
+	UserID    string    `json:"user_id"`
 	Text      string    `json:"text"`
-	SentAt    time.Time `json:"sent_at"`
+	MediaURL  string    `json:"media_url"`
+	SendTime  time.Time `json:"send_time"`
 }
 
 func notify(ctx context.Context, ev MessageEvent) error {
-	log.Printf("[notify] chat=%d sender=%d msg=%d text=%q", ev.ChatID, ev.SenderID, ev.MessageID, ev.Text)
+	log.Printf("[notify] chat=%d sender=%s msg=%d text=%q", ev.ChatID, ev.UserID, ev.MessageID, ev.Text)
 	return nil
 }
 
@@ -170,10 +167,10 @@ func main() {
 		_ = shutdown(c)
 	}()
 
-	addr := config.GetEnv("APP_PORT", ":8086")
-	brokers := config.GetEnv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
-	groupID := config.GetEnv("KAFKA_GROUP_ID", "notification-service")
-	topic := config.GetEnv("KAFKA_TOPIC_NOTIFICATIONS", "messages.new")
+	addr := envOr("APP_PORT", ":8086")
+	brokers := envOr("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
+	groupID := envOr("KAFKA_GROUP_ID", "notification-service")
+	topic := envOr("KAFKA_TOPIC_NOTIFICATIONS", "messages.created")
 
 	cons := newConsumer(brokers, groupID, topic)
 	defer func() { _ = cons.Close() }()
@@ -205,8 +202,295 @@ func main() {
 	cancel()
 }
 
+func envOr(k, def string) string {
+	if v := os.Getenv(k); v != "" {
+		return v
+	}
+	return def
+}
 
-services/notification-service/internal/shared/httpx/httpx.go
+internal/kafka/consumer.go
+package kafka
+
+import (
+	"context"
+	"log"
+	"strings"
+	"time"
+
+	"github.com/segmentio/kafka-go"
+)
+
+type Handler func(ctx context.Context, topic string, key, value []byte) error
+
+type Consumer struct {
+	reader *kafka.Reader
+	handle Handler
+}
+
+func NewConsumer(brokers, groupID, topic string, h Handler) *Consumer {
+	return &Consumer{
+		reader: kafka.NewReader(kafka.ReaderConfig{
+			Brokers:        strings.Split(brokers, ","),
+			GroupID:        groupID,
+			Topic:          topic,
+			MinBytes:       10e3,
+			MaxBytes:       10e6,
+			CommitInterval: time.Second,
+		}),
+		handle: h,
+	}
+}
+
+func (c *Consumer) Run(ctx context.Context) error {
+	defer func() {
+		_ = c.reader.Close()
+	}()
+
+	log.Printf("[Kafka] Consumer started | group=%s | topic=%s | brokers=%v",
+		c.reader.Config().GroupID, c.reader.Config().Topic, c.reader.Config().Brokers)
+
+	for {
+		m, err := c.reader.FetchMessage(ctx)
+		if err != nil {
+			if ctx.Err() != nil {
+				log.Println("[Kafka] Consumer shutting down...")
+				return nil
+			}
+			log.Printf("[Kafka] Fetch error: %v", err)
+			time.Sleep(time.Second)
+			continue
+		}
+
+		if c.handle != nil {
+			if e := c.handle(ctx, m.Topic, m.Key, m.Value); e != nil {
+				log.Printf("[Kafka] Handler error: %v", e)
+			}
+		}
+
+		if err := c.reader.CommitMessages(ctx, m); err != nil {
+			log.Printf("[Kafka] Commit error: %v", err)
+		}
+	}
+}
+
+internal/notification/handler.go
+package notification
+
+import (
+	"encoding/json"
+	"message-service/internal/shared/httpx"
+	"net/http"
+	"strconv"
+)
+
+type Handler struct{ svc Service }
+
+func NewHandler(s Service) *Handler { return &Handler{svc: s} }
+
+func (h *Handler) List(w http.ResponseWriter, r *http.Request) error {
+	userID := r.PathValue("user_id")
+	if userID == "" {
+		if uid, err := httpx.UserFromCtx(r); err == nil {
+			userID = uid
+		}
+	}
+	if userID == "" {
+		return errBadReq("missing user_id")
+	}
+
+	limit, _ := strconv.ParseInt(r.URL.Query().Get("limit"), 10, 64)
+	items, err := h.svc.List(r.Context(), userID, limit)
+	if err != nil {
+		return err
+	}
+	httpx.WriteJSON(w, map[string]any{"notifications": items}, http.StatusOK)
+	return nil
+}
+
+func (h *Handler) MarkRead(w http.ResponseWriter, r *http.Request) error {
+	uid, err := httpx.UserFromCtx(r)
+	if err != nil {
+		return errUnauthorized("auth required")
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		return errBadReq("missing id")
+	}
+	if err := h.svc.MarkRead(r.Context(), uid, id); err != nil {
+		return err
+	}
+	httpx.WriteJSON(w, map[string]string{"status": "ok"}, http.StatusOK)
+	return nil
+}
+
+func (h *Handler) CreateTest(w http.ResponseWriter, r *http.Request) error {
+	var req struct {
+		UserID string         `json:"user_id"`
+		Title  string         `json:"title"`
+		Body   string         `json:"body"`
+		Kind   Kind           `json:"kind"`
+		Meta   map[string]any `json:"meta"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return errBadReq("bad json")
+	}
+	if req.Kind == "" {
+		req.Kind = KindMessage
+	}
+	n, err := h.svc.Create(r.Context(), req.UserID, req.Kind, req.Title, req.Body, req.Meta)
+	if err != nil {
+		return err
+	}
+	httpx.WriteJSON(w, n, http.StatusCreated)
+	return nil
+}
+
+type httpErr struct {
+	msg  string
+	code int
+}
+
+func (e httpErr) Error() string      { return e.msg }
+func errBadReq(m string) error       { return httpErr{m, http.StatusBadRequest} }
+func errUnauthorized(m string) error { return httpErr{m, http.StatusUnauthorized} }
+
+internal/notification/model.go
+package notification
+
+import "time"
+
+type Kind string
+
+const (
+	KindMessage Kind = "message"
+	KindPost    Kind = "post"
+)
+
+type Notification struct {
+	ID        string         `json:"id"`
+	UserID    string         `json:"user_id"`
+	Kind      Kind           `json:"kind"`
+	Title     string         `json:"title"`
+	Body      string         `json:"body"`
+	Meta      map[string]any `json:"meta,omitempty"`
+	Read      bool           `json:"read"`
+	CreatedAt time.Time      `json:"created_at"`
+}
+
+internal/notification/repository.go
+package notification
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"github.com/redis/go-redis/v9"
+)
+
+type Repository interface {
+	Push(ctx context.Context, n Notification) error
+	List(ctx context.Context, userID string, limit int64) ([]Notification, error)
+	MarkRead(ctx context.Context, userID, notifID string) error
+}
+
+type redisRepo struct {
+	rdb *redis.Client
+	ttl time.Duration
+}
+
+func NewRedisRepository(rdb *redis.Client) Repository {
+	return &redisRepo{rdb: rdb, ttl: 30 * 24 * time.Hour}
+}
+
+func key(userID string) string { return fmt.Sprintf("notif:%s", userID) }
+
+func (r *redisRepo) Push(ctx context.Context, n Notification) error {
+	b, _ := json.Marshal(n)
+	pipe := r.rdb.TxPipeline()
+	pipe.LPush(ctx, key(n.UserID), b)
+	pipe.Expire(ctx, key(n.UserID), r.ttl)
+	_, err := pipe.Exec(ctx)
+	return err
+}
+
+func (r *redisRepo) List(ctx context.Context, userID string, limit int64) ([]Notification, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	vals, err := r.rdb.LRange(ctx, key(userID), 0, limit-1).Result()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Notification, 0, len(vals))
+	for _, v := range vals {
+		var n Notification
+		if json.Unmarshal([]byte(v), &n) == nil {
+			out = append(out, n)
+		}
+	}
+	return out, nil
+}
+
+func (r *redisRepo) MarkRead(ctx context.Context, userID, notifID string) error {
+	items, err := r.List(ctx, userID, 200)
+	if err != nil {
+		return err
+	}
+	r.rdb.Del(ctx, key(userID))
+	for i := range items {
+		if items[i].ID == notifID {
+			items[i].Read = true
+		}
+		_ = r.Push(ctx, items[len(items)-1-i])
+	}
+	return nil
+}
+
+internal/notification/service.go
+package notification
+
+import (
+	"context"
+	"time"
+
+	"github.com/google/uuid"
+)
+
+type Service interface {
+	Create(ctx context.Context, userID string, kind Kind, title, body string, meta map[string]any) (Notification, error)
+	List(ctx context.Context, userID string, limit int64) ([]Notification, error)
+	MarkRead(ctx context.Context, userID, notifID string) error
+}
+
+type service struct{ repo Repository }
+
+func NewService(r Repository) Service { return &service{repo: r} }
+
+func (s *service) Create(ctx context.Context, userID string, kind Kind, title, body string, meta map[string]any) (Notification, error) {
+	n := Notification{
+		ID:        uuid.NewString(),
+		UserID:    userID,
+		Kind:      kind,
+		Title:     title,
+		Body:      body,
+		Meta:      meta,
+		CreatedAt: time.Now().UTC(),
+	}
+	return n, s.repo.Push(ctx, n)
+}
+
+func (s *service) List(ctx context.Context, userID string, limit int64) ([]Notification, error) {
+	return s.repo.List(ctx, userID, limit)
+}
+
+func (s *service) MarkRead(ctx context.Context, userID, notifID string) error {
+	return s.repo.MarkRead(ctx, userID, notifID)
+}
+
+internal/shared/httpx/httpx.go
 package httpx
 
 import (
@@ -302,7 +586,7 @@ func MintToken(userID, secret string) string {
 
 func NowUTC() time.Time { return time.Now().UTC() }
 
-services/notification-service/internal/shared/redisx/redisx.go
+internal/shared/redisx/redisx.go
 package redisx
 
 import (
@@ -336,301 +620,3 @@ func OpenFromEnv() *redis.Client {
 	return rdb
 }
 
-
-services/notification-service/internal/notification/handler.go
-package notification
-
-import (
-	"encoding/json"
-	"message-service/internal/shared/httpx"
-	"net/http"
-	"strconv"
-)
-
-type Handler struct{ svc Service }
-
-func NewHandler(s Service) *Handler { return &Handler{svc: s} }
-
-func (h *Handler) List(w http.ResponseWriter, r *http.Request) error {
-	userID := r.PathValue("user_id")
-	if userID == "" {
-		if uid, err := httpx.UserFromCtx(r); err == nil {
-			userID = uid
-		}
-	}
-	if userID == "" {
-		return errBadReq("missing user_id")
-	}
-
-	limit, _ := strconv.ParseInt(r.URL.Query().Get("limit"), 10, 64)
-	items, err := h.svc.List(r.Context(), userID, limit)
-	if err != nil {
-		return err
-	}
-	httpx.WriteJSON(w, map[string]any{"notifications": items}, http.StatusOK)
-	return nil
-}
-
-func (h *Handler) MarkRead(w http.ResponseWriter, r *http.Request) error {
-	uid, err := httpx.UserFromCtx(r)
-	if err != nil {
-		return errUnauthorized("auth required")
-	}
-	id := r.PathValue("id")
-	if id == "" {
-		return errBadReq("missing id")
-	}
-	if err := h.svc.MarkRead(r.Context(), uid, id); err != nil {
-		return err
-	}
-	httpx.WriteJSON(w, map[string]string{"status": "ok"}, http.StatusOK)
-	return nil
-}
-
-func (h *Handler) CreateTest(w http.ResponseWriter, r *http.Request) error {
-	var req struct {
-		UserID string         `json:"user_id"`
-		Title  string         `json:"title"`
-		Body   string         `json:"body"`
-		Kind   Kind           `json:"kind"`
-		Meta   map[string]any `json:"meta"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		return errBadReq("bad json")
-	}
-	if req.Kind == "" {
-		req.Kind = KindMessage
-	}
-	n, err := h.svc.Create(r.Context(), req.UserID, req.Kind, req.Title, req.Body, req.Meta)
-	if err != nil {
-		return err
-	}
-	httpx.WriteJSON(w, n, http.StatusCreated)
-	return nil
-}
-
-type httpErr struct {
-	msg  string
-	code int
-}
-
-func (e httpErr) Error() string      { return e.msg }
-func errBadReq(m string) error       { return httpErr{m, http.StatusBadRequest} }
-func errUnauthorized(m string) error { return httpErr{m, http.StatusUnauthorized} }
-
-services/notification-service/internal/notification/model.go
-package notification
-
-import "time"
-
-type Kind string
-
-const (
-	KindMessage Kind = "message"
-	KindPost    Kind = "post"
-)
-
-type Notification struct {
-	ID        string         `json:"id"`
-	UserID    string         `json:"user_id"`
-	Kind      Kind           `json:"kind"`
-	Title     string         `json:"title"`
-	Body      string         `json:"body"`
-	Meta      map[string]any `json:"meta,omitempty"`
-	Read      bool           `json:"read"`
-	CreatedAt time.Time      `json:"created_at"`
-}
-
-
-services/notification-service/internal/notification/repository.go
-package notification
-
-import (
-	"context"
-	"encoding/json"
-	"fmt"
-	"time"
-
-	"github.com/redis/go-redis/v9"
-)
-
-type Repository interface {
-	Push(ctx context.Context, n Notification) error
-	List(ctx context.Context, userID string, limit int64) ([]Notification, error)
-	MarkRead(ctx context.Context, userID, notifID string) error
-}
-
-type redisRepo struct {
-	rdb *redis.Client
-	ttl time.Duration
-}
-
-func NewRedisRepository(rdb *redis.Client) Repository {
-	return &redisRepo{rdb: rdb, ttl: 30 * 24 * time.Hour}
-}
-
-func key(userID string) string { return fmt.Sprintf("notif:%s", userID) }
-
-func (r *redisRepo) Push(ctx context.Context, n Notification) error {
-	b, _ := json.Marshal(n)
-	pipe := r.rdb.TxPipeline()
-	pipe.LPush(ctx, key(n.UserID), b)
-	pipe.Expire(ctx, key(n.UserID), r.ttl)
-	_, err := pipe.Exec(ctx)
-	return err
-}
-
-func (r *redisRepo) List(ctx context.Context, userID string, limit int64) ([]Notification, error) {
-	if limit <= 0 {
-		limit = 50
-	}
-	vals, err := r.rdb.LRange(ctx, key(userID), 0, limit-1).Result()
-	if err != nil {
-		return nil, err
-	}
-	out := make([]Notification, 0, len(vals))
-	for _, v := range vals {
-		var n Notification
-		if json.Unmarshal([]byte(v), &n) == nil {
-			out = append(out, n)
-		}
-	}
-	return out, nil
-}
-
-func (r *redisRepo) MarkRead(ctx context.Context, userID, notifID string) error {
-	items, err := r.List(ctx, userID, 200)
-	if err != nil {
-		return err
-	}
-	r.rdb.Del(ctx, key(userID))
-	for i := range items {
-		if items[i].ID == notifID {
-			items[i].Read = true
-		}
-		_ = r.Push(ctx, items[len(items)-1-i])
-	}
-	return nil
-}
-
-
-services/notification-service/internal/notification/service.go
-package notification
-
-import (
-	"context"
-	"time"
-
-	"github.com/google/uuid"
-)
-
-type Service interface {
-	Create(ctx context.Context, userID string, kind Kind, title, body string, meta map[string]any) (Notification, error)
-	List(ctx context.Context, userID string, limit int64) ([]Notification, error)
-	MarkRead(ctx context.Context, userID, notifID string) error
-}
-
-type service struct{ repo Repository }
-
-func NewService(r Repository) Service { return &service{repo: r} }
-
-func (s *service) Create(ctx context.Context, userID string, kind Kind, title, body string, meta map[string]any) (Notification, error) {
-	n := Notification{
-		ID:        uuid.NewString(),
-		UserID:    userID,
-		Kind:      kind,
-		Title:     title,
-		Body:      body,
-		Meta:      meta,
-		CreatedAt: time.Now().UTC(),
-	}
-	return n, s.repo.Push(ctx, n)
-}
-
-func (s *service) List(ctx context.Context, userID string, limit int64) ([]Notification, error) {
-	return s.repo.List(ctx, userID, limit)
-}
-
-func (s *service) MarkRead(ctx context.Context, userID, notifID string) error {
-	return s.repo.MarkRead(ctx, userID, notifID)
-}
-
-
-services/notification-service/internal/kafka/consumer.go
-package kafka
-
-import (
-	"context"
-	"log"
-	"strings"
-	"time"
-
-	"github.com/segmentio/kafka-go"
-)
-
-type Handler func(ctx context.Context, topic string, key, value []byte) error
-
-type Consumer struct {
-	reader *kafka.Reader
-	handle Handler
-}
-
-func NewConsumer(brokers, groupID, topic string, h Handler) *Consumer {
-	return &Consumer{
-		reader: kafka.NewReader(kafka.ReaderConfig{
-			Brokers:        strings.Split(brokers, ","),
-			GroupID:        groupID,
-			Topic:          topic,
-			MinBytes:       10e3,
-			MaxBytes:       10e6,
-			CommitInterval: time.Second,
-		}),
-		handle: h,
-	}
-}
-
-func (c *Consumer) Run(ctx context.Context) error {
-	defer func() {
-		_ = c.reader.Close()
-	}()
-
-	log.Printf("[Kafka] Consumer started | group=%s | topic=%s | brokers=%v",
-		c.reader.Config().GroupID, c.reader.Config().Topic, c.reader.Config().Brokers)
-
-	for {
-		m, err := c.reader.FetchMessage(ctx)
-		if err != nil {
-			if ctx.Err() != nil {
-				log.Println("[Kafka] Consumer shutting down...")
-				return nil
-			}
-			log.Printf("[Kafka] Fetch error: %v", err)
-			time.Sleep(time.Second)
-			continue
-		}
-
-		if c.handle != nil {
-			if e := c.handle(ctx, m.Topic, m.Key, m.Value); e != nil {
-				log.Printf("[Kafka] Handler error: %v", e)
-			}
-		}
-
-		if err := c.reader.CommitMessages(ctx, m); err != nil {
-			log.Printf("[Kafka] Commit error: %v", err)
-		}
-	}
-}
-
-
-services/notification-service/internal/config/env.go
-package config
-
-import "os"
-
-func GetEnv(k, def string) string {
-	v := os.Getenv(k)
-	if v == "" {
-		return def
-	}
-	return v
-}

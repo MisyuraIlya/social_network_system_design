@@ -1,4 +1,9 @@
-services/message-service/cmd/app/main.go
+# Project code dump
+
+- Generated: 2025-10-16 15:32:54+0300
+- Root: `/home/ilya/projects/social_network_system_design/services/message-service`
+
+cmd/app/main.go
 package main
 
 import (
@@ -162,7 +167,682 @@ func main() {
 	log.Fatal(srv.ListenAndServe())
 }
 
-services/message-service/internal/shared/db/single.go
+internal/chat/chat.go
+package chat
+
+import "time"
+
+type Chat struct {
+	ID        int64     `gorm:"primaryKey" json:"id"`
+	Name      string    `gorm:"size:200" json:"name"`
+	OwnerID   string    `gorm:"size:64" json:"owner_id"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type ChatUser struct {
+	ChatID    int64     `gorm:"primaryKey" json:"chat_id"`
+	UserID    string    `gorm:"primaryKey;size:64" json:"user_id"`
+	Type      string    `gorm:"size:32" json:"type"` // member/admin/…
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type CreateReq struct {
+	Name    string   `json:"name" validate:"required"`
+	Members []string `json:"members"` // optional (besides creator)
+}
+
+internal/chat/handler.go
+package chat
+
+import (
+	"net/http"
+	"strconv"
+
+	"message-service/internal/shared/httpx"
+	"message-service/internal/shared/validate"
+)
+
+type Handler struct{ svc Service }
+
+func NewHandler(s Service) *Handler { return &Handler{svc: s} }
+
+func (h *Handler) Create(w http.ResponseWriter, r *http.Request) error {
+	uid, err := httpx.UserFromCtx(r)
+	if err != nil {
+		return err
+	}
+	in, err := httpx.Decode[CreateReq](r)
+	if err != nil {
+		return err
+	}
+	if err := validate.Struct(in); err != nil {
+		return err
+	}
+	c, err := h.svc.Create(uid, in)
+	if err != nil {
+		return err
+	}
+	httpx.WriteJSON(w, c, http.StatusCreated)
+	return nil
+}
+
+func (h *Handler) GetByID(w http.ResponseWriter, r *http.Request) error {
+	id, _ := strconv.ParseInt(r.PathValue("chat_id"), 10, 64)
+	c, err := h.svc.GetByID(id)
+	if err != nil {
+		return err
+	}
+	httpx.WriteJSON(w, c, http.StatusOK)
+	return nil
+}
+
+func (h *Handler) ListMine(w http.ResponseWriter, r *http.Request) error {
+	uid, err := httpx.UserFromCtx(r)
+	if err != nil {
+		return err
+	}
+	limit := qint(r, "limit", 50)
+	offset := qint(r, "offset", 0)
+	out, err := h.svc.ListMine(uid, limit, offset)
+	if err != nil {
+		return err
+	}
+	httpx.WriteJSON(w, map[string]any{"items": out, "limit": limit, "offset": offset}, http.StatusOK)
+	return nil
+}
+
+func (h *Handler) Join(w http.ResponseWriter, r *http.Request) error {
+	uid, err := httpx.UserFromCtx(r)
+	if err != nil {
+		return err
+	}
+	cid, _ := strconv.ParseInt(r.PathValue("chat_id"), 10, 64)
+	if cid == 0 {
+		return httpx.ErrUnauthorized
+	}
+	if err := h.svc.Join(cid, uid); err != nil {
+		return err
+	}
+	httpx.WriteJSON(w, ok(), http.StatusOK)
+	return nil
+}
+
+func (h *Handler) AddUser(w http.ResponseWriter, r *http.Request) error {
+	actorID, err := httpx.UserFromCtx(r)
+	if err != nil {
+		return err
+	}
+	cid, _ := strconv.ParseInt(r.PathValue("chat_id"), 10, 64)
+	uid := r.PathValue("user_id")
+	if cid == 0 || uid == "" {
+		return httpx.ErrUnauthorized
+	}
+	if err := h.svc.AddUser(cid, actorID, uid); err != nil {
+		return err
+	}
+	httpx.WriteJSON(w, ok(), http.StatusOK)
+	return nil
+}
+
+func (h *Handler) Leave(w http.ResponseWriter, r *http.Request) error {
+	uid, err := httpx.UserFromCtx(r)
+	if err != nil {
+		return err
+	}
+	cid, _ := strconv.ParseInt(r.PathValue("chat_id"), 10, 64)
+	if cid == 0 {
+		return httpx.ErrUnauthorized
+	}
+	if err := h.svc.Leave(cid, uid); err != nil {
+		return err
+	}
+	httpx.WriteJSON(w, ok(), http.StatusOK)
+	return nil
+}
+
+func (h *Handler) Popular(w http.ResponseWriter, r *http.Request) error {
+	top := qint(r, "top", 10)
+	ids, err := h.svc.TopPopular(r.Context(), int64(top))
+	if err != nil {
+		return err
+	}
+	httpx.WriteJSON(w, map[string]any{"chat_ids": ids}, http.StatusOK)
+	return nil
+}
+
+func qint(r *http.Request, key string, def int) int {
+	s := r.URL.Query().Get(key)
+	if s == "" {
+		return def
+	}
+	n, _ := strconv.Atoi(s)
+	if n <= 0 {
+		return def
+	}
+	return n
+}
+func ok() map[string]string { return map[string]string{"status": "ok"} }
+
+internal/chat/repository.go
+package chat
+
+import (
+	"message-service/internal/shared/db"
+
+	"gorm.io/gorm"
+)
+
+type Repository interface {
+	Create(owner string, name string, extra []string) (*Chat, error)
+	GetByID(chatID int64) (*Chat, error)
+	AddUser(chatID int64, userID, typ string) error
+	RemoveUser(chatID int64, userID string) error
+	ListByUser(userID string, limit, offset int) ([]Chat, error)
+}
+
+type repo struct{ store *db.Store }
+
+func NewRepository(s *db.Store) Repository { return &repo{store: s} }
+
+func (r *repo) Create(owner, name string, extra []string) (*Chat, error) {
+	c := &Chat{Name: name, OwnerID: owner}
+	if err := r.store.Base.Create(c).Error; err != nil {
+		return nil, err
+	}
+	members := append([]string{owner}, extra...)
+	for _, m := range members {
+		_ = r.store.Base.FirstOrCreate(&ChatUser{ChatID: c.ID, UserID: m, Type: "member"}).Error
+	}
+	return c, nil
+}
+
+func (r *repo) GetByID(chatID int64) (*Chat, error) {
+	var c Chat
+	if err := r.store.Base.First(&c, "id = ?", chatID).Error; err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+func (r *repo) AddUser(chatID int64, userID, typ string) error {
+	return r.store.Base.FirstOrCreate(&ChatUser{ChatID: chatID, UserID: userID, Type: typ}).Error
+}
+
+func (r *repo) RemoveUser(chatID int64, userID string) error {
+	return r.store.Base.Delete(&ChatUser{}, "chat_id=? AND user_id=?", chatID, userID).Error
+}
+
+func (r *repo) ListByUser(userID string, limit, offset int) ([]Chat, error) {
+	var out []Chat
+	err := r.store.Base.
+		Joins("JOIN chat_users cu ON cu.chat_id = chats.id AND cu.user_id = ?", userID).
+		Order("chats.created_at DESC").Limit(limit).Offset(offset).
+		Find(&out).Error
+	return out, err
+}
+
+var _ = gorm.ErrRecordNotFound
+
+internal/chat/service.go
+package chat
+
+import (
+	"context"
+	"fmt"
+	"message-service/internal/redisx"
+)
+
+type Service interface {
+	Create(owner string, in CreateReq) (*Chat, error)
+	GetByID(chatID int64) (*Chat, error)
+	AddUser(chatID int64, actorID string, userID string) error
+	Join(chatID int64, userID string) error
+	Leave(chatID int64, userID string) error
+	ListMine(userID string, limit, offset int) ([]Chat, error)
+	IncPopular(ctx context.Context, chatID int64)
+	TopPopular(ctx context.Context, n int64) ([]int64, error)
+}
+
+type service struct {
+	repo Repository
+	rds  *redisx.Client
+}
+
+func NewService(r Repository, rds *redisx.Client) Service {
+	return &service{repo: r, rds: rds}
+}
+
+func (s *service) Create(owner string, in CreateReq) (*Chat, error) {
+	return s.repo.Create(owner, in.Name, in.Members)
+}
+func (s *service) GetByID(chatID int64) (*Chat, error) {
+	return s.repo.GetByID(chatID)
+}
+
+func (s *service) AddUser(chatID int64, actorID string, userID string) error {
+	chat, err := s.repo.GetByID(chatID)
+	if err != nil {
+		return err
+	}
+	if chat.OwnerID != actorID {
+		return fmt.Errorf("forbidden: only owner can add users")
+	}
+	return s.repo.AddUser(chatID, userID, "member")
+}
+func (s *service) Join(chatID int64, userID string) error {
+	return s.repo.AddUser(chatID, userID, "member")
+}
+func (s *service) Leave(chatID int64, userID string) error { return s.repo.RemoveUser(chatID, userID) }
+func (s *service) ListMine(userID string, limit, offset int) ([]Chat, error) {
+	return s.repo.ListByUser(userID, limit, offset)
+}
+func (s *service) IncPopular(ctx context.Context, chatID int64) { s.rds.IncPopular(ctx, chatID) }
+func (s *service) TopPopular(ctx context.Context, n int64) ([]int64, error) {
+	return s.rds.TopPopular(ctx, n)
+}
+
+internal/kafka/writer.go
+package kafka
+
+import (
+	"context"
+	"time"
+
+	k "github.com/segmentio/kafka-go"
+)
+
+type Writer struct {
+	w *k.Writer
+}
+
+func NewWriter(bootstrap, topic string) (*Writer, error) {
+	w := &k.Writer{
+		Addr:         k.TCP(bootstrap),
+		Topic:        topic,
+		Balancer:     &k.LeastBytes{},
+		BatchTimeout: 50 * time.Millisecond,
+		RequiredAcks: k.RequireNone,
+		Async:        true,
+	}
+	return &Writer{w: w}, nil
+}
+
+func (w *Writer) Close() error { return w.w.Close() }
+
+func (w *Writer) Publish(ctx context.Context, key string, value []byte) error {
+	return w.w.WriteMessages(ctx, k.Message{
+		Key:   []byte(key),
+		Value: value,
+		Time:  time.Now(),
+	})
+}
+
+internal/media/client.go
+package media
+
+import (
+	"bytes"
+	"encoding/json"
+	"io"
+	"mime/multipart"
+	"net/http"
+)
+
+type Client struct{ base string }
+
+func New(base string) *Client {
+	if base == "" {
+		base = "http://media-service:8088"
+	}
+	return &Client{base: base}
+}
+
+func (c *Client) Upload(fieldName, fileName string, r io.Reader, bearer string) (string, error) {
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	fw, _ := w.CreateFormFile(fieldName, fileName)
+	_, _ = io.Copy(fw, r)
+	_ = w.Close()
+
+	req, _ := http.NewRequest("POST", c.base+"/media/upload", &buf)
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	if bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return "", io.ErrUnexpectedEOF
+	}
+	var o struct {
+		URL string `json:"url"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&o)
+	return o.URL, nil
+}
+
+internal/message/handler.go
+package message
+
+import (
+	"io"
+	"net/http"
+	"strconv"
+
+	"message-service/internal/shared/httpx"
+	"message-service/internal/shared/validate"
+)
+
+type Handler struct{ svc Service }
+
+func NewHandler(s Service) *Handler { return &Handler{svc: s} }
+
+func (h *Handler) Send(w http.ResponseWriter, r *http.Request) error {
+	uid, err := httpx.UserFromCtx(r)
+	if err != nil {
+		return err
+	}
+	in, err := httpx.Decode[SendReq](r)
+	if err != nil {
+		return err
+	}
+	if err := validate.Struct(in); err != nil {
+		return err
+	}
+	m, err := h.svc.Send(r.Context(), uid, in)
+	if err != nil {
+		return err
+	}
+	httpx.WriteJSON(w, m, http.StatusCreated)
+	return nil
+}
+
+func (h *Handler) UploadAndSend(w http.ResponseWriter, r *http.Request) error {
+	uid, err := httpx.UserFromCtx(r)
+	if err != nil {
+		return err
+	}
+	if err := r.ParseMultipartForm(10 << 20); err != nil {
+		return err
+	}
+	f, fh, err := r.FormFile("file")
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	data, _ := io.ReadAll(f)
+	chatID, _ := strconv.ParseInt(r.FormValue("chat_id"), 10, 64)
+	text := r.FormValue("text")
+	bearer := httpx.BearerToken(r)
+	m, err := h.svc.SendWithUpload(r.Context(), uid, chatID, fh.Filename, data, text, bearer)
+	if err != nil {
+		return err
+	}
+	httpx.WriteJSON(w, m, http.StatusCreated)
+	return nil
+}
+
+func (h *Handler) ListByChat(w http.ResponseWriter, r *http.Request) error {
+	_, err := httpx.UserFromCtx(r)
+	if err != nil {
+		return err
+	}
+	cid, _ := strconv.ParseInt(r.PathValue("chat_id"), 10, 64)
+	limit := qint(r, "limit", 50)
+	offset := qint(r, "offset", 0)
+	items, err := h.svc.ListByChat(cid, limit, offset)
+	if err != nil {
+		return err
+	}
+	httpx.WriteJSON(w, map[string]any{"items": items, "limit": limit, "offset": offset}, http.StatusOK)
+	return nil
+}
+
+func (h *Handler) MarkSeen(w http.ResponseWriter, r *http.Request) error {
+	uid, err := httpx.UserFromCtx(r)
+	if err != nil {
+		return err
+	}
+	mid, _ := strconv.ParseInt(r.PathValue("message_id"), 10, 64)
+	if err := h.svc.MarkSeen(mid, uid); err != nil {
+		return err
+	}
+	httpx.WriteJSON(w, map[string]string{"status": "ok"}, http.StatusOK)
+	return nil
+}
+
+func qint(r *http.Request, key string, def int) int {
+	s := r.URL.Query().Get(key)
+	if s == "" {
+		return def
+	}
+	n, _ := strconv.Atoi(s)
+	if n <= 0 {
+		return def
+	}
+	return n
+}
+
+internal/message/message.go
+package message
+
+import "time"
+
+type Message struct {
+	ID            int64     `gorm:"primaryKey" json:"id"`
+	UserID        string    `gorm:"size:64" json:"user_id"`
+	ChatID        int64     `gorm:"index" json:"chat_id"`
+	Text          string    `json:"text"`
+	MediaURL      string    `gorm:"size:512" json:"media_url"`
+	IsSeen        bool      `json:"is_seen"`
+	SendTime      time.Time `json:"send_time"`
+	DeliveredTime time.Time `json:"delivered_time"`
+}
+
+type SendReq struct {
+	ChatID   int64  `json:"chat_id" validate:"required"`
+	Text     string `json:"text"`
+	MediaURL string `json:"media_url"`
+}
+
+internal/message/repository.go
+package message
+
+import (
+	"message-service/internal/shared/db"
+)
+
+type Repository interface {
+	Create(m *Message) (*Message, error)
+	MarkSeen(messageID int64, userID string) error
+	ListByChat(chatID int64, limit, offset int) ([]Message, error)
+}
+
+type repo struct{ store *db.Store }
+
+func NewRepository(s *db.Store) Repository { return &repo{store: s} }
+
+func (r *repo) Create(m *Message) (*Message, error) {
+	if err := r.store.Base.Create(m).Error; err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+func (r *repo) MarkSeen(messageID int64, userID string) error {
+	return r.store.Base.Model(&Message{}).Where("id=? AND user_id=?", messageID, userID).
+		Update("is_seen", true).Error
+}
+
+func (r *repo) ListByChat(chatID int64, limit, offset int) ([]Message, error) {
+	var out []Message
+	err := r.store.Base.
+		Where("chat_id = ?", chatID).
+		Order("id DESC").Limit(limit).Offset(offset).
+		Find(&out).Error
+	return out, err
+}
+
+internal/message/service.go
+package message
+
+import (
+	"context"
+	"encoding/json"
+	"strconv"
+	"time"
+
+	"message-service/internal/chat"
+	"message-service/internal/kafka"
+	"message-service/internal/media"
+	"message-service/internal/redisx"
+)
+
+type Service interface {
+	Send(ctx context.Context, userID string, in SendReq) (*Message, error)
+	SendWithUpload(ctx context.Context, userID string, chatID int64, fileName string, fileData []byte, text string, bearer string) (*Message, error)
+	MarkSeen(messageID int64, userID string) error
+	ListByChat(chatID int64, limit, offset int) ([]Message, error)
+}
+
+type service struct {
+	repo  Repository
+	chats chat.Service
+	rds   *redisx.Client
+	kafka *kafka.Writer
+	media *media.Client
+}
+
+func NewService(r Repository, cs chat.Service, rds *redisx.Client, kw *kafka.Writer, mc *media.Client) Service {
+	return &service{repo: r, chats: cs, rds: rds, kafka: kw, media: mc}
+}
+
+func (s *service) Send(ctx context.Context, userID string, in SendReq) (*Message, error) {
+	// ensure chat exists
+	if _, err := s.chats.GetByID(in.ChatID); err != nil {
+		return nil, err
+	}
+	m := &Message{
+		UserID: userID, ChatID: in.ChatID,
+		Text: in.Text, MediaURL: in.MediaURL,
+		SendTime: time.Now(),
+	}
+	res, err := s.repo.Create(m)
+	if err != nil {
+		return nil, err
+	}
+
+	// side effects: popularity + kafka event
+	s.chats.IncPopular(ctx, in.ChatID)
+	_ = s.emit(res)
+
+	return res, nil
+}
+
+func (s *service) SendWithUpload(ctx context.Context, userID string, chatID int64, fileName string, data []byte, text string, bearer string) (*Message, error) {
+	url, err := s.media.Upload("file", fileName, bytesReader(data), bearer)
+	if err != nil {
+		return nil, err
+	}
+	return s.Send(ctx, userID, SendReq{ChatID: chatID, Text: text, MediaURL: url})
+}
+
+func (s *service) MarkSeen(messageID int64, userID string) error {
+	return s.repo.MarkSeen(messageID, userID)
+}
+
+func (s *service) ListByChat(chatID int64, limit, offset int) ([]Message, error) {
+	return s.repo.ListByChat(chatID, limit, offset)
+}
+
+func (s *service) emit(m *Message) error {
+	b, _ := json.Marshal(map[string]any{
+		"message_id": m.ID, "chat_id": m.ChatID, "user_id": m.UserID,
+		"text": m.Text, "media_url": m.MediaURL, "send_time": m.SendTime,
+	})
+	return s.kafka.Publish(context.Background(), "chat:"+strconv.FormatInt(m.ChatID, 10), b)
+}
+
+internal/message/util.go
+package message
+
+import (
+	"bytes"
+	"io"
+)
+
+// bytesReader returns an io.Reader for []byte
+func bytesReader(b []byte) io.Reader { return bytes.NewReader(b) }
+
+internal/migrate/migrate.go
+package migrate
+
+import (
+	"message-service/internal/chat"
+	"message-service/internal/message"
+	"message-service/internal/shared/db"
+)
+
+func AutoMigrateAll(store *db.Store) error {
+	return store.Base.AutoMigrate(
+		&chat.Chat{}, &chat.ChatUser{},
+		&message.Message{},
+	)
+}
+
+internal/redisx/cache.go
+package redisx
+
+import (
+	"context"
+	"os"
+	"strconv"
+	"time"
+
+	"github.com/redis/go-redis/v9"
+)
+
+type Client struct{ R *redis.Client }
+
+func NewClientFromEnv() *Client {
+	host := os.Getenv("REDIS_HOST")
+	if host == "" {
+		host = "redis-message"
+	}
+	port := os.Getenv("REDIS_PORT")
+	if port == "" {
+		port = "6379"
+	}
+	addr := host + ":" + port
+	rdb := redis.NewClient(&redis.Options{Addr: addr, DB: 0})
+	return &Client{R: rdb}
+}
+
+// Popular chats via sorted set
+const popularKey = "popular_chats"
+
+func (c *Client) IncPopular(ctx context.Context, chatID int64) {
+	_ = c.R.ZIncrBy(ctx, popularKey, 1, strconv.FormatInt(chatID, 10)).Err()
+	_ = c.R.Expire(ctx, popularKey, 24*time.Hour).Err()
+}
+func (c *Client) TopPopular(ctx context.Context, n int64) ([]int64, error) {
+	items, err := c.R.ZRevRange(ctx, popularKey, 0, n-1).Result()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]int64, 0, len(items))
+	for _, s := range items {
+		if v, e := strconv.ParseInt(s, 10, 64); e == nil {
+			out = append(out, v)
+		}
+	}
+	return out, nil
+}
+
+internal/shared/db/single.go
 package db
 
 import (
@@ -246,8 +926,7 @@ func pingWithTimeout(sqlDB *sql.DB, timeout time.Duration) error {
 	}
 }
 
-
-services/message-service/internal/shared/httpx/httpx.go
+internal/shared/httpx/httpx.go
 package httpx
 
 import (
@@ -286,6 +965,14 @@ func WriteJSON(w http.ResponseWriter, v any, code int) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+func BearerToken(r *http.Request) string {
+	h := r.Header.Get("Authorization")
+	if strings.HasPrefix(h, "Bearer ") {
+		return strings.TrimSpace(h[7:])
+	}
+	return ""
+}
+
 var (
 	ctxUserIDKey    = "httpx.user_id"
 	ErrUnauthorized = errors.New("unauthorized")
@@ -317,8 +1004,7 @@ func UserFromCtx(r *http.Request) (string, error) {
 	return uid, nil
 }
 
-
-services/message-service/internal/shared/jwt/jwt.go
+internal/shared/jwt/jwt.go
 package jwt
 
 import (
@@ -352,8 +1038,7 @@ func Parse(tok string) (string, error) {
 	return uid, nil
 }
 
-
-services/message-service/internal/shared/validate/validate.go
+internal/shared/validate/validate.go
 package validate
 
 import "github.com/go-playground/validator/v10"
@@ -362,669 +1047,3 @@ var v = validator.New()
 
 func Struct(s any) error { return v.Struct(s) }
 
-
-services/message-service/internal/redisx/cache.go
-package redisx
-
-import (
-	"context"
-	"os"
-	"strconv"
-	"time"
-
-	"github.com/redis/go-redis/v9"
-)
-
-type Client struct{ R *redis.Client }
-
-func NewClientFromEnv() *Client {
-	host := os.Getenv("REDIS_HOST")
-	if host == "" {
-		host = "redis-message"
-	}
-	port := os.Getenv("REDIS_PORT")
-	if port == "" {
-		port = "6379"
-	}
-	addr := host + ":" + port
-	rdb := redis.NewClient(&redis.Options{Addr: addr, DB: 0})
-	return &Client{R: rdb}
-}
-
-// Popular chats via sorted set
-const popularKey = "popular_chats"
-
-func (c *Client) IncPopular(ctx context.Context, chatID int64) {
-	_ = c.R.ZIncrBy(ctx, popularKey, 1, strconv.FormatInt(chatID, 10)).Err()
-	_ = c.R.Expire(ctx, popularKey, 24*time.Hour).Err()
-}
-func (c *Client) TopPopular(ctx context.Context, n int64) ([]int64, error) {
-	items, err := c.R.ZRevRange(ctx, popularKey, 0, n-1).Result()
-	if err != nil {
-		return nil, err
-	}
-	out := make([]int64, 0, len(items))
-	for _, s := range items {
-		if v, e := strconv.ParseInt(s, 10, 64); e == nil {
-			out = append(out, v)
-		}
-	}
-	return out, nil
-}
-
-services/message-service/internal/migrate/migrate.go
-package migrate
-
-import (
-	"message-service/internal/chat"
-	"message-service/internal/message"
-	"message-service/internal/shared/db"
-)
-
-func AutoMigrateAll(store *db.Store) error {
-	return store.Base.AutoMigrate(
-		&chat.Chat{}, &chat.ChatUser{},
-		&message.Message{},
-	)
-}
-
-
-services/message-service/internal/message/handler.go
-package message
-
-import (
-	"io"
-	"net/http"
-	"strconv"
-
-	"message-service/internal/shared/httpx"
-	"message-service/internal/shared/validate"
-)
-
-type Handler struct{ svc Service }
-
-func NewHandler(s Service) *Handler { return &Handler{svc: s} }
-
-func (h *Handler) Send(w http.ResponseWriter, r *http.Request) error {
-	uid, err := httpx.UserFromCtx(r)
-	if err != nil {
-		return err
-	}
-	in, err := httpx.Decode[SendReq](r)
-	if err != nil {
-		return err
-	}
-	if err := validate.Struct(in); err != nil {
-		return err
-	}
-	m, err := h.svc.Send(r.Context(), uid, in)
-	if err != nil {
-		return err
-	}
-	httpx.WriteJSON(w, m, http.StatusCreated)
-	return nil
-}
-
-func (h *Handler) UploadAndSend(w http.ResponseWriter, r *http.Request) error {
-	uid, err := httpx.UserFromCtx(r)
-	if err != nil {
-		return err
-	}
-	if err := r.ParseMultipartForm(10 << 20); err != nil {
-		return err
-	}
-	f, fh, err := r.FormFile("file")
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	data, _ := io.ReadAll(f)
-	chatID, _ := strconv.ParseInt(r.FormValue("chat_id"), 10, 64)
-	text := r.FormValue("text")
-	m, err := h.svc.SendWithUpload(r.Context(), uid, chatID, fh.Filename, data, text)
-	if err != nil {
-		return err
-	}
-	httpx.WriteJSON(w, m, http.StatusCreated)
-	return nil
-}
-
-func (h *Handler) ListByChat(w http.ResponseWriter, r *http.Request) error {
-	_, err := httpx.UserFromCtx(r)
-	if err != nil {
-		return err
-	}
-	cid, _ := strconv.ParseInt(r.PathValue("chat_id"), 10, 64)
-	limit := qint(r, "limit", 50)
-	offset := qint(r, "offset", 0)
-	items, err := h.svc.ListByChat(cid, limit, offset)
-	if err != nil {
-		return err
-	}
-	httpx.WriteJSON(w, map[string]any{"items": items, "limit": limit, "offset": offset}, http.StatusOK)
-	return nil
-}
-
-func (h *Handler) MarkSeen(w http.ResponseWriter, r *http.Request) error {
-	uid, err := httpx.UserFromCtx(r)
-	if err != nil {
-		return err
-	}
-	mid, _ := strconv.ParseInt(r.PathValue("message_id"), 10, 64)
-	if err := h.svc.MarkSeen(mid, uid); err != nil {
-		return err
-	}
-	httpx.WriteJSON(w, map[string]string{"status": "ok"}, http.StatusOK)
-	return nil
-}
-
-func qint(r *http.Request, key string, def int) int {
-	s := r.URL.Query().Get(key)
-	if s == "" {
-		return def
-	}
-	n, _ := strconv.Atoi(s)
-	if n <= 0 {
-		return def
-	}
-	return n
-}
-
-
-services/message-service/internal/message/message.go
-package message
-
-import "time"
-
-type Message struct {
-	ID            int64     `gorm:"primaryKey" json:"id"`
-	UserID        string    `gorm:"size:64" json:"user_id"`
-	ChatID        int64     `gorm:"index" json:"chat_id"`
-	Text          string    `json:"text"`
-	MediaURL      string    `gorm:"size:512" json:"media_url"`
-	IsSeen        bool      `json:"is_seen"`
-	SendTime      time.Time `json:"send_time"`
-	DeliveredTime time.Time `json:"delivered_time"`
-}
-
-type SendReq struct {
-	ChatID   int64  `json:"chat_id" validate:"required"`
-	Text     string `json:"text"`
-	MediaURL string `json:"media_url"`
-}
-
-services/message-service/internal/message/repository.go
-package message
-
-import (
-	"message-service/internal/shared/db"
-)
-
-type Repository interface {
-	Create(m *Message) (*Message, error)
-	MarkSeen(messageID int64, userID string) error
-	ListByChat(chatID int64, limit, offset int) ([]Message, error)
-}
-
-type repo struct{ store *db.Store }
-
-func NewRepository(s *db.Store) Repository { return &repo{store: s} }
-
-func (r *repo) Create(m *Message) (*Message, error) {
-	if err := r.store.Base.Create(m).Error; err != nil {
-		return nil, err
-	}
-	return m, nil
-}
-
-func (r *repo) MarkSeen(messageID int64, userID string) error {
-	return r.store.Base.Model(&Message{}).Where("id=? AND user_id=?", messageID, userID).
-		Update("is_seen", true).Error
-}
-
-func (r *repo) ListByChat(chatID int64, limit, offset int) ([]Message, error) {
-	var out []Message
-	err := r.store.Base.
-		Where("chat_id = ?", chatID).
-		Order("id DESC").Limit(limit).Offset(offset).
-		Find(&out).Error
-	return out, err
-}
-
-services/message-service/internal/message/service.go
-package message
-
-import (
-	"context"
-	"encoding/json"
-	"strconv"
-	"time"
-
-	"message-service/internal/chat"
-	"message-service/internal/kafka"
-	"message-service/internal/media"
-	"message-service/internal/redisx"
-)
-
-type Service interface {
-	Send(ctx context.Context, userID string, in SendReq) (*Message, error)
-	SendWithUpload(ctx context.Context, userID string, chatID int64, fileName string, fileData []byte, text string) (*Message, error)
-	MarkSeen(messageID int64, userID string) error
-	ListByChat(chatID int64, limit, offset int) ([]Message, error)
-}
-
-type service struct {
-	repo  Repository
-	chats chat.Service
-	rds   *redisx.Client
-	kafka *kafka.Writer
-	media *media.Client
-}
-
-func NewService(r Repository, cs chat.Service, rds *redisx.Client, kw *kafka.Writer, mc *media.Client) Service {
-	return &service{repo: r, chats: cs, rds: rds, kafka: kw, media: mc}
-}
-
-func (s *service) Send(ctx context.Context, userID string, in SendReq) (*Message, error) {
-	// ensure chat exists
-	if _, err := s.chats.GetByID(in.ChatID); err != nil {
-		return nil, err
-	}
-	m := &Message{
-		UserID: userID, ChatID: in.ChatID,
-		Text: in.Text, MediaURL: in.MediaURL,
-		SendTime: time.Now(),
-	}
-	res, err := s.repo.Create(m)
-	if err != nil {
-		return nil, err
-	}
-
-	// side effects: popularity + kafka event
-	s.chats.IncPopular(ctx, in.ChatID)
-	_ = s.emit(res)
-
-	return res, nil
-}
-
-func (s *service) SendWithUpload(ctx context.Context, userID string, chatID int64, fileName string, data []byte, text string) (*Message, error) {
-	url, err := s.media.Upload("file", fileName, bytesReader(data))
-	if err != nil {
-		return nil, err
-	}
-	return s.Send(ctx, userID, SendReq{ChatID: chatID, Text: text, MediaURL: url})
-}
-
-func (s *service) MarkSeen(messageID int64, userID string) error {
-	return s.repo.MarkSeen(messageID, userID)
-}
-
-func (s *service) ListByChat(chatID int64, limit, offset int) ([]Message, error) {
-	return s.repo.ListByChat(chatID, limit, offset)
-}
-
-func (s *service) emit(m *Message) error {
-	b, _ := json.Marshal(map[string]any{
-		"message_id": m.ID, "chat_id": m.ChatID, "user_id": m.UserID,
-		"text": m.Text, "media_url": m.MediaURL, "send_time": m.SendTime,
-	})
-	return s.kafka.Publish(context.Background(), "chat:"+strconv.FormatInt(m.ChatID, 10), b)
-}
-
-
-services/message-service/internal/message/util.go
-package message
-
-import (
-	"bytes"
-	"io"
-)
-
-// bytesReader returns an io.Reader for []byte
-func bytesReader(b []byte) io.Reader { return bytes.NewReader(b) }
-
-services/message-service/internal/media/client.go
-package media
-
-import (
-	"bytes"
-	"encoding/json"
-	"io"
-	"mime/multipart"
-	"net/http"
-)
-
-type Client struct{ base string }
-
-func New(base string) *Client {
-	if base == "" {
-		base = "http://media-service:8088"
-	}
-	return &Client{base: base}
-}
-
-func (c *Client) Upload(fieldName, fileName string, r io.Reader) (string, error) {
-	var buf bytes.Buffer
-	w := multipart.NewWriter(&buf)
-	fw, _ := w.CreateFormFile(fieldName, fileName)
-	_, _ = io.Copy(fw, r)
-	_ = w.Close()
-
-	req, _ := http.NewRequest("POST", c.base+"/media/upload", &buf)
-	req.Header.Set("Content-Type", w.FormDataContentType())
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		return "", io.ErrUnexpectedEOF
-	}
-	var o struct {
-		URL string `json:"url"`
-	}
-	_ = json.NewDecoder(resp.Body).Decode(&o)
-	return o.URL, nil
-}
-
-
-services/message-service/internal/kafka/writer.go
-package kafka
-
-import (
-	"context"
-	"time"
-
-	k "github.com/segmentio/kafka-go"
-)
-
-type Writer struct {
-	w *k.Writer
-}
-
-func NewWriter(bootstrap, topic string) (*Writer, error) {
-	w := &k.Writer{
-		Addr:         k.TCP(bootstrap),
-		Topic:        topic,
-		Balancer:     &k.LeastBytes{},
-		BatchTimeout: 50 * time.Millisecond,
-		RequiredAcks: k.RequireNone,
-		Async:        true,
-	}
-	return &Writer{w: w}, nil
-}
-
-func (w *Writer) Close() error { return w.w.Close() }
-
-func (w *Writer) Publish(ctx context.Context, key string, value []byte) error {
-	return w.w.WriteMessages(ctx, k.Message{
-		Key:   []byte(key),
-		Value: value,
-		Time:  time.Now(),
-	})
-}
-
-
-services/message-service/internal/chat/chat.go
-package chat
-
-import "time"
-
-type Chat struct {
-	ID        int64     `gorm:"primaryKey" json:"id"`
-	Name      string    `gorm:"size:200" json:"name"`
-	OwnerID   string    `gorm:"size:64" json:"owner_id"`
-	CreatedAt time.Time `json:"created_at"`
-}
-
-type ChatUser struct {
-	ChatID    int64     `gorm:"primaryKey" json:"chat_id"`
-	UserID    string    `gorm:"primaryKey;size:64" json:"user_id"`
-	Type      string    `gorm:"size:32" json:"type"` // member/admin/…
-	CreatedAt time.Time `json:"created_at"`
-}
-
-type CreateReq struct {
-	Name    string   `json:"name" validate:"required"`
-	Members []string `json:"members"` // optional (besides creator)
-}
-
-services/message-service/internal/chat/handler.go
-package chat
-
-import (
-	"net/http"
-	"strconv"
-
-	"message-service/internal/shared/httpx"
-	"message-service/internal/shared/validate"
-)
-
-type Handler struct{ svc Service }
-
-func NewHandler(s Service) *Handler { return &Handler{svc: s} }
-
-func (h *Handler) Create(w http.ResponseWriter, r *http.Request) error {
-	uid, err := httpx.UserFromCtx(r)
-	if err != nil {
-		return err
-	}
-	in, err := httpx.Decode[CreateReq](r)
-	if err != nil {
-		return err
-	}
-	if err := validate.Struct(in); err != nil {
-		return err
-	}
-	c, err := h.svc.Create(uid, in)
-	if err != nil {
-		return err
-	}
-	httpx.WriteJSON(w, c, http.StatusCreated)
-	return nil
-}
-
-func (h *Handler) GetByID(w http.ResponseWriter, r *http.Request) error {
-	id, _ := strconv.ParseInt(r.PathValue("chat_id"), 10, 64)
-	c, err := h.svc.GetByID(id)
-	if err != nil {
-		return err
-	}
-	httpx.WriteJSON(w, c, http.StatusOK)
-	return nil
-}
-
-func (h *Handler) ListMine(w http.ResponseWriter, r *http.Request) error {
-	uid, err := httpx.UserFromCtx(r)
-	if err != nil {
-		return err
-	}
-	limit := qint(r, "limit", 50)
-	offset := qint(r, "offset", 0)
-	out, err := h.svc.ListMine(uid, limit, offset)
-	if err != nil {
-		return err
-	}
-	httpx.WriteJSON(w, map[string]any{"items": out, "limit": limit, "offset": offset}, http.StatusOK)
-	return nil
-}
-
-func (h *Handler) Join(w http.ResponseWriter, r *http.Request) error {
-	uid, err := httpx.UserFromCtx(r)
-	if err != nil {
-		return err
-	}
-	cid, _ := strconv.ParseInt(r.PathValue("chat_id"), 10, 64)
-	if cid == 0 {
-		return httpx.ErrUnauthorized
-	}
-	if err := h.svc.Join(cid, uid); err != nil {
-		return err
-	}
-	httpx.WriteJSON(w, ok(), http.StatusOK)
-	return nil
-}
-
-func (h *Handler) AddUser(w http.ResponseWriter, r *http.Request) error {
-	_, err := httpx.UserFromCtx(r)
-	if err != nil {
-		return err
-	}
-	cid, _ := strconv.ParseInt(r.PathValue("chat_id"), 10, 64)
-	uid := r.PathValue("user_id")
-	if cid == 0 || uid == "" {
-		return httpx.ErrUnauthorized
-	}
-	if err := h.svc.AddUser(cid, uid); err != nil {
-		return err
-	}
-	httpx.WriteJSON(w, ok(), http.StatusOK)
-	return nil
-}
-
-func (h *Handler) Leave(w http.ResponseWriter, r *http.Request) error {
-	uid, err := httpx.UserFromCtx(r)
-	if err != nil {
-		return err
-	}
-	cid, _ := strconv.ParseInt(r.PathValue("chat_id"), 10, 64)
-	if cid == 0 {
-		return httpx.ErrUnauthorized
-	}
-	if err := h.svc.Leave(cid, uid); err != nil {
-		return err
-	}
-	httpx.WriteJSON(w, ok(), http.StatusOK)
-	return nil
-}
-
-func (h *Handler) Popular(w http.ResponseWriter, r *http.Request) error {
-	top := qint(r, "top", 10)
-	ids, err := h.svc.TopPopular(r.Context(), int64(top))
-	if err != nil {
-		return err
-	}
-	httpx.WriteJSON(w, map[string]any{"chat_ids": ids}, http.StatusOK)
-	return nil
-}
-
-func qint(r *http.Request, key string, def int) int {
-	s := r.URL.Query().Get(key)
-	if s == "" {
-		return def
-	}
-	n, _ := strconv.Atoi(s)
-	if n <= 0 {
-		return def
-	}
-	return n
-}
-func ok() map[string]string { return map[string]string{"status": "ok"} }
-
-services/message-service/internal/chat/repository.go
-package chat
-
-import (
-	"message-service/internal/shared/db"
-
-	"gorm.io/gorm"
-)
-
-type Repository interface {
-	Create(owner string, name string, extra []string) (*Chat, error)
-	GetByID(chatID int64) (*Chat, error)
-	AddUser(chatID int64, userID, typ string) error
-	RemoveUser(chatID int64, userID string) error
-	ListByUser(userID string, limit, offset int) ([]Chat, error)
-}
-
-type repo struct{ store *db.Store }
-
-func NewRepository(s *db.Store) Repository { return &repo{store: s} }
-
-func (r *repo) Create(owner, name string, extra []string) (*Chat, error) {
-	c := &Chat{Name: name, OwnerID: owner}
-	if err := r.store.Base.Create(c).Error; err != nil {
-		return nil, err
-	}
-	members := append([]string{owner}, extra...)
-	for _, m := range members {
-		_ = r.store.Base.FirstOrCreate(&ChatUser{ChatID: c.ID, UserID: m, Type: "member"}).Error
-	}
-	return c, nil
-}
-
-func (r *repo) GetByID(chatID int64) (*Chat, error) {
-	var c Chat
-	if err := r.store.Base.First(&c, "id = ?", chatID).Error; err != nil {
-		return nil, err
-	}
-	return &c, nil
-}
-
-func (r *repo) AddUser(chatID int64, userID, typ string) error {
-	return r.store.Base.FirstOrCreate(&ChatUser{ChatID: chatID, UserID: userID, Type: typ}).Error
-}
-
-func (r *repo) RemoveUser(chatID int64, userID string) error {
-	return r.store.Base.Delete(&ChatUser{}, "chat_id=? AND user_id=?", chatID, userID).Error
-}
-
-func (r *repo) ListByUser(userID string, limit, offset int) ([]Chat, error) {
-	var out []Chat
-	err := r.store.Base.
-		Joins("JOIN chat_users cu ON cu.chat_id = chats.id AND cu.user_id = ?", userID).
-		Order("chats.created_at DESC").Limit(limit).Offset(offset).
-		Find(&out).Error
-	return out, err
-}
-
-var _ = gorm.ErrRecordNotFound
-
-services/message-service/internal/chat/service.go
-
-package chat
-
-import (
-	"context"
-	"message-service/internal/redisx"
-)
-
-type Service interface {
-	Create(owner string, in CreateReq) (*Chat, error)
-	GetByID(chatID int64) (*Chat, error)
-	AddUser(chatID int64, userID string) error
-	Join(chatID int64, userID string) error
-	Leave(chatID int64, userID string) error
-	ListMine(userID string, limit, offset int) ([]Chat, error)
-	IncPopular(ctx context.Context, chatID int64)
-	TopPopular(ctx context.Context, n int64) ([]int64, error)
-}
-
-type service struct {
-	repo Repository
-	rds  *redisx.Client
-}
-
-func NewService(r Repository, rds *redisx.Client) Service {
-	return &service{repo: r, rds: rds}
-}
-
-func (s *service) Create(owner string, in CreateReq) (*Chat, error) {
-	return s.repo.Create(owner, in.Name, in.Members)
-}
-func (s *service) GetByID(chatID int64) (*Chat, error) { return s.repo.GetByID(chatID) }
-func (s *service) AddUser(chatID int64, userID string) error {
-	return s.repo.AddUser(chatID, userID, "member")
-}
-func (s *service) Join(chatID int64, userID string) error {
-	return s.repo.AddUser(chatID, userID, "member")
-}
-func (s *service) Leave(chatID int64, userID string) error { return s.repo.RemoveUser(chatID, userID) }
-func (s *service) ListMine(userID string, limit, offset int) ([]Chat, error) {
-	return s.repo.ListByUser(userID, limit, offset)
-}
-func (s *service) IncPopular(ctx context.Context, chatID int64) { s.rds.IncPopular(ctx, chatID) }
-func (s *service) TopPopular(ctx context.Context, n int64) ([]int64, error) {
-	return s.rds.TopPopular(ctx, n)
-}

@@ -1,4 +1,9 @@
-services/post-service/cmd/app/main.go
+# Project code dump
+
+- Generated: 2025-10-16 15:32:54+0300
+- Root: `/home/ilya/projects/social_network_system_design/services/post-service`
+
+cmd/app/main.go
 package main
 
 import (
@@ -146,218 +151,253 @@ func main() {
 	log.Fatal(srv.ListenAndServe())
 }
 
+internal/comment/comment.go
+package comment
 
-services/post-service/internal/shared/db/simple.go
-package db
+import "time"
+
+type Comment struct {
+	ID        uint64    `gorm:"primaryKey" json:"id"`
+	UserID    string    `gorm:"index;size:64" json:"user_id"`
+	PostID    uint64    `gorm:"index" json:"post_id"`
+	Name      string    `gorm:"size:120" json:"name"`
+	Text      string    `json:"text"`
+	Likes     uint64    `json:"likes"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type CreateReq struct {
+	PostID uint64 `json:"post_id" validate:"required"`
+	Text   string `json:"text" validate:"required"`
+	Name   string `json:"name"`
+}
+
+internal/comment/handler.go
+package comment
 
 import (
-	"database/sql"
-	"fmt"
-	"log"
-	"os"
-	"time"
+	"net/http"
+	"strconv"
 
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
+	"post-service/internal/shared/httpx"
+	"post-service/internal/shared/validate"
 )
 
-type Store struct{ Base *gorm.DB }
+type Handler struct{ svc Service }
 
-func OpenFromEnv() *Store {
-	host := getenv("DB_HOST", "post-db")
-	user := getenv("DB_USER", "post")
-	pass := getenv("DB_PASSWORD", "postpass")
-	name := getenv("DB_NAME", "post_db")
-	port := getenv("DB_PORT", "5432")
+func NewHandler(s Service) *Handler { return &Handler{svc: s} }
 
-	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
-		host, port, user, pass, name,
-	)
-
-	var base *gorm.DB
-	var err error
-	sleep := time.Second
-	for i := 0; i < 8; i++ {
-		base, err = gorm.Open(postgres.Open(dsn), &gorm.Config{
-			Logger: logger.Default.LogMode(logger.Warn),
-		})
-		if err == nil {
-			sqlDB, _ := base.DB()
-			if pingWithTimeout(sqlDB, 2*time.Second) == nil {
-				break
-			}
-		}
-		time.Sleep(sleep)
-		if sleep < 8*time.Second {
-			sleep *= 2
-		}
-	}
+func (h *Handler) Create(w http.ResponseWriter, r *http.Request) error {
+	uid, err := httpx.UserFromCtx(r)
 	if err != nil {
-		log.Fatalf("db open: %v", err)
-	}
-	sqlDB, _ := base.DB()
-	sqlDB.SetMaxOpenConns(40)
-	sqlDB.SetMaxIdleConns(10)
-	sqlDB.SetConnMaxLifetime(30 * time.Minute)
-
-	return &Store{Base: base}
-}
-
-func getenv(k, def string) string {
-	if v := os.Getenv(k); v != "" {
-		return v
-	}
-	return def
-}
-
-func pingWithTimeout(sqlDB *sql.DB, timeout time.Duration) error {
-	done := make(chan error, 1)
-	go func() { done <- sqlDB.Ping() }()
-	select {
-	case err := <-done:
 		return err
-	case <-time.After(timeout):
-		return fmt.Errorf("db ping timeout after %s", timeout)
 	}
+	in, err := httpx.Decode[CreateReq](r)
+	if err != nil {
+		return err
+	}
+	if err := validate.Struct(in); err != nil {
+		return err
+	}
+	c, err := h.svc.Create(uid, in)
+	if err != nil {
+		return err
+	}
+	httpx.WriteJSON(w, c, http.StatusCreated)
+	return nil
 }
 
+func (h *Handler) ListByPost(w http.ResponseWriter, r *http.Request) error {
+	pid, _ := strconv.ParseUint(r.PathValue("post_id"), 10, 64)
+	limit := httpx.QueryInt(r, "limit", 50)
+	offset := httpx.QueryInt(r, "offset", 0)
+	items, err := h.svc.ListByPost(pid, limit, offset)
+	if err != nil {
+		return err
+	}
+	httpx.WriteJSON(w, map[string]any{"items": items, "limit": limit, "offset": offset}, http.StatusOK)
+	return nil
+}
 
-services/post-service/internal/shared/httpx/httpx.go
-package httpx
+func (h *Handler) Like(w http.ResponseWriter, r *http.Request) error {
+	uid, err := httpx.UserFromCtx(r)
+	if err != nil {
+		return err
+	}
+	id, _ := strconv.ParseUint(r.PathValue("comment_id"), 10, 64)
+	if err := h.svc.Like(uid, id); err != nil {
+		return err
+	}
+	httpx.WriteJSON(w, map[string]string{"status": "ok"}, http.StatusOK)
+	return nil
+}
+
+internal/comment/repository.go
+package comment
+
+import (
+	"post-service/internal/shared/db"
+
+	"gorm.io/gorm"
+)
+
+type Repository interface {
+	Create(c *Comment) (*Comment, error)
+	ListByPost(postID uint64, limit, offset int) ([]Comment, error)
+	IncLike(commentID uint64) error
+}
+
+type repo struct{ store *db.Store }
+
+func NewRepository(s *db.Store) Repository { return &repo{store: s} }
+
+func (r *repo) Create(c *Comment) (*Comment, error) {
+	if err := r.store.Base.Create(c).Error; err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+func (r *repo) ListByPost(postID uint64, limit, offset int) ([]Comment, error) {
+	var out []Comment
+	err := r.store.Base.Where("post_id = ?", postID).
+		Order("created_at DESC").Limit(limit).Offset(offset).
+		Find(&out).Error
+	return out, err
+}
+
+func (r *repo) IncLike(commentID uint64) error {
+	return r.store.Base.Model(&Comment{}).
+		Where("id = ?", commentID).
+		UpdateColumn("likes", gorm.Expr("likes + 1")).Error
+}
+
+internal/comment/service.go
+package comment
+
+import (
+	"time"
+
+	"post-service/internal/shared/validate"
+)
+
+type Service interface {
+	Create(uid string, in CreateReq) (*Comment, error)
+	ListByPost(postID uint64, limit, offset int) ([]Comment, error)
+	Like(uid string, commentID uint64) error
+}
+
+type service struct{ repo Repository }
+
+func NewService(r Repository) Service { return &service{repo: r} }
+
+func (s *service) Create(uid string, in CreateReq) (*Comment, error) {
+	if err := validate.Struct(in); err != nil {
+		return nil, err
+	}
+	return s.repo.Create(&Comment{
+		UserID: uid, PostID: in.PostID, Name: in.Name, Text: in.Text,
+		CreatedAt: time.Now(),
+	})
+}
+
+func (s *service) ListByPost(postID uint64, limit, offset int) ([]Comment, error) {
+	return s.repo.ListByPost(postID, limit, offset)
+}
+
+func (s *service) Like(uid string, commentID uint64) error {
+	_ = uid
+	return s.repo.IncLike(commentID)
+}
+
+internal/kafka/producer.go
+package kafka
 
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"net/http"
-	"strconv"
+	"fmt"
 	"strings"
-
-	"post-service/internal/shared/jwt"
-)
-
-type HandlerFunc func(http.ResponseWriter, *http.Request) error
-
-func Wrap(fn HandlerFunc) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := fn(w, r); err != nil {
-			code := http.StatusBadRequest
-			if errors.Is(err, ErrUnauthorized) {
-				code = http.StatusUnauthorized
-			}
-			WriteJSON(w, map[string]any{"error": err.Error()}, code)
-		}
-	})
-}
-
-func Decode[T any](r *http.Request) (T, error) {
-	var t T
-	err := json.NewDecoder(r.Body).Decode(&t)
-	return t, err
-}
-
-func WriteJSON(w http.ResponseWriter, v any, code int) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(v)
-}
-
-var (
-	ctxUserIDKey    = "httpx.user_id"
-	ErrUnauthorized = errors.New("unauthorized")
-)
-
-func AuthMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h := r.Header.Get("Authorization")
-		if !strings.HasPrefix(h, "Bearer ") {
-			WriteJSON(w, map[string]any{"error": "unauthorized", "reason": "missing bearer"}, http.StatusUnauthorized)
-			return
-		}
-		tok := strings.TrimSpace(h[7:])
-		uid, _, err := jwt.Parse(tok)
-		if err != nil || uid == "" {
-			WriteJSON(w, map[string]any{"error": "unauthorized", "reason": "bad token"}, http.StatusUnauthorized)
-			return
-		}
-		ctx := context.WithValue(r.Context(), ctxUserIDKey, uid)
-		next.ServeHTTP(w, r.WithContext(ctx))
-	})
-}
-
-func UserFromCtx(r *http.Request) (string, error) {
-	uid, _ := r.Context().Value(ctxUserIDKey).(string)
-	if uid == "" {
-		return "", ErrUnauthorized
-	}
-	return uid, nil
-}
-
-func QueryInt(r *http.Request, key string, def int) int {
-	s := r.URL.Query().Get(key)
-	if s == "" {
-		return def
-	}
-	n, err := strconv.Atoi(s)
-	if err != nil {
-		return def
-	}
-	return n
-}
-
-
-services/post-service/internal/shared/jwt/jwt.go
-package jwt
-
-import (
-	"errors"
-	"os"
 	"time"
 
-	jw "github.com/golang-jwt/jwt/v5"
+	kgo "github.com/segmentio/kafka-go"
 )
 
-func secret() []byte {
-	if s := os.Getenv("JWT_SECRET"); s != "" {
-		return []byte(s)
-	}
-	return []byte("replace-this-with-a-strong-secret")
+type Writer interface {
+	WriteJSON(ctx context.Context, v any) error
+	Close() error
 }
 
-func Make(userID string) (string, error) {
-	claims := jw.MapClaims{
-		"sub": userID,
-		"iat": time.Now().Unix(),
-		"exp": time.Now().Add(24 * time.Hour).Unix(),
-	}
-	return jw.NewWithClaims(jw.SigningMethodHS256, claims).SignedString(secret())
+type writer struct {
+	w *kgo.Writer
 }
 
-func Parse(tok string) (string, int, error) {
-	t, err := jw.Parse(tok, func(t *jw.Token) (any, error) { return secret(), nil })
-	if err != nil || !t.Valid {
-		return "", 0, errors.New("invalid token")
+func NewWriter(bootstrapServers, topic string) (Writer, error) {
+	addr := "kafka:9092"
+	if strings.TrimSpace(bootstrapServers) != "" {
+		addr = bootstrapServers
 	}
-	mc, ok := t.Claims.(jw.MapClaims)
-	if !ok {
-		return "", 0, errors.New("bad claims")
+	w := &kgo.Writer{
+		Addr:         kgo.TCP(addr),
+		Topic:        topic,
+		Balancer:     &kgo.LeastBytes{},
+		RequiredAcks: kgo.RequireOne,
+		Async:        false,
+		BatchTimeout: 50 * time.Millisecond,
 	}
-	uid, _ := mc["sub"].(string)
-	return uid, 0, nil
+	return &writer{w: w}, nil
 }
 
-services/post-service/internal/shared/validate/validate.go
-package validate
+func (wr *writer) WriteJSON(ctx context.Context, v any) error {
+	b, err := jsonMarshal(v)
+	if err != nil {
+		return err
+	}
+	msg := kgo.Message{Value: b}
+	return wr.w.WriteMessages(ctx, msg)
+}
 
-import "github.com/go-playground/validator/v10"
+func (wr *writer) Close() error { return wr.w.Close() }
 
-var v = validator.New()
+func jsonMarshal(v any) ([]byte, error) {
+	switch t := v.(type) {
+	case []byte:
+		return t, nil
+	default:
+		return jsonMarshalStd(v)
+	}
+}
 
-func Struct(s any) error { return v.Struct(s) }
+func jsonMarshalStd(v any) ([]byte, error) {
+	type json = struct{}
+	_ = json{}
+	return jsonMarshalImpl(v)
+}
 
+func jsonMarshalImpl(v any) ([]byte, error) { return json.Marshal(v) }
 
-services/post-service/internal/post/handler.go
+var _ = fmt.Sprintf
+
+internal/migrate/migrate.go
+package migrate
+
+import (
+	"post-service/internal/comment"
+	"post-service/internal/post"
+	"post-service/internal/shared/db"
+	"post-service/internal/tag"
+)
+
+func AutoMigrateAll(store *db.Store) error {
+	return store.Base.AutoMigrate(
+		&post.Post{},
+		&post.PostTag{},
+		&tag.Tag{},
+		&comment.Comment{},
+	)
+}
+
+internal/post/handler.go
 package post
 
 import (
@@ -465,8 +505,7 @@ func (h *Handler) AddView(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-
-services/post-service/internal/post/post.go
+internal/post/post.go
 package post
 
 import "time"
@@ -496,8 +535,7 @@ type CreateReq struct {
 type LikeReq struct {
 }
 
-
-services/post-service/internal/post/repository.go
+internal/post/repository.go
 package post
 
 import (
@@ -569,8 +607,7 @@ func (r *repo) IncView(postID uint64) error {
 
 var _ = errors.New
 
-
-services/post-service/internal/post/service.go
+internal/post/service.go
 package post
 
 import (
@@ -634,12 +671,12 @@ func (s *service) Create(uid string, in CreateReq) (*Post, error) {
 		}
 	}
 	_ = s.kafka.WriteJSON(context.Background(), map[string]any{
-		"type": "post.created",
-		"ts":   time.Now().Unix(),
-		"post": map[string]any{
-			"id": out.ID, "user_id": out.UserID, "description": out.Description, "media": out.MediaURL,
-		},
-		"tags": in.Tags,
+		"id":          out.ID,
+		"user_id":     out.UserID,
+		"description": out.Description,
+		"media_url":   out.MediaURL,
+		"tags":        in.Tags,
+		"created_at":  out.CreatedAt,
 	})
 	return out, nil
 }
@@ -676,7 +713,7 @@ func uploadToMediaService(filename string, r io.Reader) (string, error) {
 	}
 	_ = w.Close()
 
-	req, _ := http.NewRequest("POST", fmt.Sprintf("%s/upload", base), &body)
+	req, _ := http.NewRequest("POST", fmt.Sprintf("%s/media/upload", base), &body)
 	req.Header.Set("Content-Type", w.FormDataContentType())
 
 	resp, err := http.DefaultClient.Do(req)
@@ -698,180 +735,215 @@ func uploadToMediaService(filename string, r io.Reader) (string, error) {
 	return o.URL, nil
 }
 
-
-services/post-service/internal/migrate/migrate.go
-package migrate
+internal/shared/db/simple.go
+package db
 
 import (
-	"post-service/internal/comment"
-	"post-service/internal/post"
-	"post-service/internal/shared/db"
-	"post-service/internal/tag"
+	"database/sql"
+	"fmt"
+	"log"
+	"os"
+	"time"
+
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
-func AutoMigrateAll(store *db.Store) error {
-	return store.Base.AutoMigrate(
-		&post.Post{},
-		&post.PostTag{},
-		&tag.Tag{},
-		&comment.Comment{},
+type Store struct{ Base *gorm.DB }
+
+func OpenFromEnv() *Store {
+	host := getenv("DB_HOST", "post-db")
+	user := getenv("DB_USER", "post")
+	pass := getenv("DB_PASSWORD", "postpass")
+	name := getenv("DB_NAME", "post_db")
+	port := getenv("DB_PORT", "5432")
+
+	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
+		host, port, user, pass, name,
 	)
+
+	var base *gorm.DB
+	var err error
+	sleep := time.Second
+	for i := 0; i < 8; i++ {
+		base, err = gorm.Open(postgres.Open(dsn), &gorm.Config{
+			Logger: logger.Default.LogMode(logger.Warn),
+		})
+		if err == nil {
+			sqlDB, _ := base.DB()
+			if pingWithTimeout(sqlDB, 2*time.Second) == nil {
+				break
+			}
+		}
+		time.Sleep(sleep)
+		if sleep < 8*time.Second {
+			sleep *= 2
+		}
+	}
+	if err != nil {
+		log.Fatalf("db open: %v", err)
+	}
+	sqlDB, _ := base.DB()
+	sqlDB.SetMaxOpenConns(40)
+	sqlDB.SetMaxIdleConns(10)
+	sqlDB.SetConnMaxLifetime(30 * time.Minute)
+
+	return &Store{Base: base}
 }
 
+func getenv(k, def string) string {
+	if v := os.Getenv(k); v != "" {
+		return v
+	}
+	return def
+}
 
-services/post-service/internal/kafka/producer.go
-package kafka
+func pingWithTimeout(sqlDB *sql.DB, timeout time.Duration) error {
+	done := make(chan error, 1)
+	go func() { done <- sqlDB.Ping() }()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(timeout):
+		return fmt.Errorf("db ping timeout after %s", timeout)
+	}
+}
+
+internal/shared/httpx/httpx.go
+package httpx
 
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"strings"
-	"time"
-
-	kgo "github.com/segmentio/kafka-go"
-)
-
-type Writer interface {
-	WriteJSON(ctx context.Context, v any) error
-	Close() error
-}
-
-type writer struct {
-	w *kgo.Writer
-}
-
-func NewWriter(bootstrapServers, topic string) (Writer, error) {
-	addr := "kafka:9092"
-	if strings.TrimSpace(bootstrapServers) != "" {
-		addr = bootstrapServers
-	}
-	w := &kgo.Writer{
-		Addr:         kgo.TCP(addr),
-		Topic:        topic,
-		Balancer:     &kgo.LeastBytes{},
-		RequiredAcks: kgo.RequireOne,
-		Async:        false,
-		BatchTimeout: 50 * time.Millisecond,
-	}
-	return &writer{w: w}, nil
-}
-
-func (wr *writer) WriteJSON(ctx context.Context, v any) error {
-	b, err := jsonMarshal(v)
-	if err != nil {
-		return err
-	}
-	msg := kgo.Message{Value: b}
-	return wr.w.WriteMessages(ctx, msg)
-}
-
-func (wr *writer) Close() error { return wr.w.Close() }
-
-func jsonMarshal(v any) ([]byte, error) {
-	switch t := v.(type) {
-	case []byte:
-		return t, nil
-	default:
-		return jsonMarshalStd(v)
-	}
-}
-
-func jsonMarshalStd(v any) ([]byte, error) {
-	type json = struct{}
-	_ = json{}
-	return jsonMarshalImpl(v)
-}
-
-func jsonMarshalImpl(v any) ([]byte, error) { return json.Marshal(v) }
-
-var _ = fmt.Sprintf
-
-
-services/post-service/internal/comment/comment.go
-package comment
-
-import "time"
-
-type Comment struct {
-	ID        uint64    `gorm:"primaryKey" json:"id"`
-	UserID    string    `gorm:"index;size:64" json:"user_id"`
-	PostID    uint64    `gorm:"index" json:"post_id"`
-	Name      string    `gorm:"size:120" json:"name"`
-	Text      string    `json:"text"`
-	Likes     uint64    `json:"likes"`
-	CreatedAt time.Time `json:"created_at"`
-}
-
-type CreateReq struct {
-	PostID uint64 `json:"post_id" validate:"required"`
-	Text   string `json:"text" validate:"required"`
-	Name   string `json:"name"`
-}
-
-services/post-service/internal/comment/handler.go
-package comment
-
-import (
+	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
-	"post-service/internal/shared/httpx"
-	"post-service/internal/shared/validate"
+	"post-service/internal/shared/jwt"
 )
 
-type Handler struct{ svc Service }
+type HandlerFunc func(http.ResponseWriter, *http.Request) error
 
-func NewHandler(s Service) *Handler { return &Handler{svc: s} }
-
-func (h *Handler) Create(w http.ResponseWriter, r *http.Request) error {
-	uid, err := httpx.UserFromCtx(r)
-	if err != nil {
-		return err
-	}
-	in, err := httpx.Decode[CreateReq](r)
-	if err != nil {
-		return err
-	}
-	if err := validate.Struct(in); err != nil {
-		return err
-	}
-	c, err := h.svc.Create(uid, in)
-	if err != nil {
-		return err
-	}
-	httpx.WriteJSON(w, c, http.StatusCreated)
-	return nil
+func Wrap(fn HandlerFunc) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := fn(w, r); err != nil {
+			code := http.StatusBadRequest
+			if errors.Is(err, ErrUnauthorized) {
+				code = http.StatusUnauthorized
+			}
+			WriteJSON(w, map[string]any{"error": err.Error()}, code)
+		}
+	})
 }
 
-func (h *Handler) ListByPost(w http.ResponseWriter, r *http.Request) error {
-	pid, _ := strconv.ParseUint(r.PathValue("post_id"), 10, 64)
-	limit := httpx.QueryInt(r, "limit", 50)
-	offset := httpx.QueryInt(r, "offset", 0)
-	items, err := h.svc.ListByPost(pid, limit, offset)
-	if err != nil {
-		return err
-	}
-	httpx.WriteJSON(w, map[string]any{"items": items, "limit": limit, "offset": offset}, http.StatusOK)
-	return nil
+func Decode[T any](r *http.Request) (T, error) {
+	var t T
+	err := json.NewDecoder(r.Body).Decode(&t)
+	return t, err
 }
 
-func (h *Handler) Like(w http.ResponseWriter, r *http.Request) error {
-	uid, err := httpx.UserFromCtx(r)
-	if err != nil {
-		return err
-	}
-	id, _ := strconv.ParseUint(r.PathValue("comment_id"), 10, 64)
-	if err := h.svc.Like(uid, id); err != nil {
-		return err
-	}
-	httpx.WriteJSON(w, map[string]string{"status": "ok"}, http.StatusOK)
-	return nil
+func WriteJSON(w http.ResponseWriter, v any, code int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(v)
 }
 
+var (
+	ctxUserIDKey    = "httpx.user_id"
+	ErrUnauthorized = errors.New("unauthorized")
+)
 
-services/post-service/internal/comment/repository.go
-package comment
+func AuthMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := r.Header.Get("Authorization")
+		if !strings.HasPrefix(h, "Bearer ") {
+			WriteJSON(w, map[string]any{"error": "unauthorized", "reason": "missing bearer"}, http.StatusUnauthorized)
+			return
+		}
+		tok := strings.TrimSpace(h[7:])
+		uid, _, err := jwt.Parse(tok)
+		if err != nil || uid == "" {
+			WriteJSON(w, map[string]any{"error": "unauthorized", "reason": "bad token"}, http.StatusUnauthorized)
+			return
+		}
+		ctx := context.WithValue(r.Context(), ctxUserIDKey, uid)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func UserFromCtx(r *http.Request) (string, error) {
+	uid, _ := r.Context().Value(ctxUserIDKey).(string)
+	if uid == "" {
+		return "", ErrUnauthorized
+	}
+	return uid, nil
+}
+
+func QueryInt(r *http.Request, key string, def int) int {
+	s := r.URL.Query().Get(key)
+	if s == "" {
+		return def
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return def
+	}
+	return n
+}
+
+internal/shared/jwt/jwt.go
+package jwt
+
+import (
+	"errors"
+	"os"
+	"time"
+
+	jw "github.com/golang-jwt/jwt/v5"
+)
+
+func secret() []byte {
+	if s := os.Getenv("JWT_SECRET"); s != "" {
+		return []byte(s)
+	}
+	return []byte("replace-this-with-a-strong-secret")
+}
+
+func Make(userID string) (string, error) {
+	claims := jw.MapClaims{
+		"sub": userID,
+		"iat": time.Now().Unix(),
+		"exp": time.Now().Add(24 * time.Hour).Unix(),
+	}
+	return jw.NewWithClaims(jw.SigningMethodHS256, claims).SignedString(secret())
+}
+
+func Parse(tok string) (string, int, error) {
+	t, err := jw.Parse(tok, func(t *jw.Token) (any, error) { return secret(), nil })
+	if err != nil || !t.Valid {
+		return "", 0, errors.New("invalid token")
+	}
+	mc, ok := t.Claims.(jw.MapClaims)
+	if !ok {
+		return "", 0, errors.New("bad claims")
+	}
+	uid, _ := mc["sub"].(string)
+	return uid, 0, nil
+}
+
+internal/shared/validate/validate.go
+package validate
+
+import "github.com/go-playground/validator/v10"
+
+var v = validator.New()
+
+func Struct(s any) error { return v.Struct(s) }
+
+internal/tag/repository.go
+package tag
 
 import (
 	"post-service/internal/shared/db"
@@ -880,71 +952,72 @@ import (
 )
 
 type Repository interface {
-	Create(c *Comment) (*Comment, error)
-	ListByPost(postID uint64, limit, offset int) ([]Comment, error)
-	IncLike(commentID uint64) error
+	FirstOrCreateByName(name string) (*Tag, error)
+	FindByNames(names []string) ([]Tag, error)
 }
 
 type repo struct{ store *db.Store }
 
 func NewRepository(s *db.Store) Repository { return &repo{store: s} }
 
-func (r *repo) Create(c *Comment) (*Comment, error) {
-	if err := r.store.Base.Create(c).Error; err != nil {
+func (r *repo) FirstOrCreateByName(name string) (*Tag, error) {
+	t := &Tag{Name: name}
+	if err := r.store.Base.FirstOrCreate(t, "name = ?", name).Error; err != nil {
 		return nil, err
 	}
-	return c, nil
+	return t, nil
 }
 
-func (r *repo) ListByPost(postID uint64, limit, offset int) ([]Comment, error) {
-	var out []Comment
-	err := r.store.Base.Where("post_id = ?", postID).
-		Order("created_at DESC").Limit(limit).Offset(offset).
-		Find(&out).Error
+func (r *repo) FindByNames(names []string) ([]Tag, error) {
+	if len(names) == 0 {
+		return nil, nil
+	}
+	var out []Tag
+	err := r.store.Base.Where("name IN ?", names).Find(&out).Error
 	return out, err
 }
 
-func (r *repo) IncLike(commentID uint64) error {
-	return r.store.Base.Model(&Comment{}).
-		Where("id = ?", commentID).
-		UpdateColumn("likes", gorm.Expr("likes + 1")).Error
-}
+var _ = gorm.ErrRecordNotFound
 
-
-services/post-service/internal/comment/service.go
-package comment
-
-import (
-	"time"
-
-	"post-service/internal/shared/validate"
-)
+internal/tag/service.go
+package tag
 
 type Service interface {
-	Create(uid string, in CreateReq) (*Comment, error)
-	ListByPost(postID uint64, limit, offset int) ([]Comment, error)
-	Like(uid string, commentID uint64) error
+	Ensure(names []string) ([]Tag, error)
 }
 
 type service struct{ repo Repository }
 
 func NewService(r Repository) Service { return &service{repo: r} }
 
-func (s *service) Create(uid string, in CreateReq) (*Comment, error) {
-	if err := validate.Struct(in); err != nil {
-		return nil, err
+func (s *service) Ensure(names []string) ([]Tag, error) {
+	out := make([]Tag, 0, len(names))
+	seen := map[string]struct{}{}
+	for _, n := range names {
+		if n == "" {
+			continue
+		}
+		if _, ok := seen[n]; ok {
+			continue
+		}
+		seen[n] = struct{}{}
+		t, err := s.repo.FirstOrCreateByName(n)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *t)
 	}
-	return s.repo.Create(&Comment{
-		UserID: uid, PostID: in.PostID, Name: in.Name, Text: in.Text,
-		CreatedAt: time.Now(),
-	})
+	return out, nil
 }
 
-func (s *service) ListByPost(postID uint64, limit, offset int) ([]Comment, error) {
-	return s.repo.ListByPost(postID, limit, offset)
+internal/tag/tag.go
+package tag
+
+import "time"
+
+type Tag struct {
+	ID        uint64    `gorm:"primaryKey" json:"id"`
+	Name      string    `gorm:"uniqueIndex;size:120" json:"name"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
-func (s *service) Like(uid string, commentID uint64) error {
-	_ = uid
-	return s.repo.IncLike(commentID)
-}
