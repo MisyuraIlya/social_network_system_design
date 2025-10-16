@@ -1,0 +1,51 @@
+// Service: feedback-service
+// Replication: master-slave (async), RF=3
+// Sharding: key-based by post_id
+// Notes: No cross-service FKs enforced (posts/users live elsewhere)
+
+Table post_likes_sums {
+  post_id     bigint [pk, note: 'Shard key; 1 row per post']
+  likes_count bigint [not null, default: 0]
+  updated_at  timestamp
+}
+
+Table post_comments_sums {
+  post_id        bigint [pk, note: 'Shard key; 1 row per post']
+  comments_count bigint [not null, default: 0]
+  updated_at     timestamp
+}
+
+Table post_likes {
+  post_id    bigint       [not null, note: 'Shard key']
+  user_id    varchar(64)  [not null, note: 'User identifier (string/UUID)']
+  created_at timestamp    [default: `now()`]
+
+  indexes {
+    (post_id, user_id) [pk, name: 'pk_post_likes'] // composite PK prevents dup likes
+    post_id            [name: 'idx_post_likes_post']
+    user_id            [name: 'idx_post_likes_user']
+  }
+  // cross-service references intentionally not enforced:
+  // posts(id), users(id)
+}
+
+Table post_comments {
+  id         bigint       [pk, increment]
+  post_id    bigint       [not null, note: 'Shard key']
+  user_id    varchar(64)  [not null]
+  reply_id   bigint       [note: 'Self-reply; null for top-level']
+  text       text         [not null]
+  created_at timestamp    [default: `now()`]
+
+  indexes {
+    post_id          [name: 'idx_post_comments_post']
+    user_id          [name: 'idx_post_comments_user']
+    reply_id         [name: 'idx_post_comments_reply']
+    (post_id, id)    [name: 'idx_post_comments_post_id']
+  }
+  // cross-service references intentionally not enforced:
+  // posts(id), users(id)
+}
+
+/* Top-level refs (DBML requires this): */
+Ref: post_comments.reply_id > post_comments.id

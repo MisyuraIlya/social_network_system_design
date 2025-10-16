@@ -1,214 +1,331 @@
-services:
-feed service:
-// Replication:
-// - master-master (async slave)
-// - replication factor 3
+here my db diagrams 
+feed service cache.dbml: 
+// Service: feed-service (Redis-backed)
+// Storage model (from code):
+// - author_posts:{user_id}     -> LIST of FeedEntry (max 500)
+// - users_feed:{user_id}       -> LIST of FeedEntry (max 1000)
+// - celebrities_feed:{user_id} -> LIST of FeedEntry (max 500)
+// - celebrities:set            -> SET of celebrity user IDs
 //
-// Sharding:
-// - key based by user_id
+// Notes:
+// - We represent Redis lists/sets as logical tables for visualization.
+// - No real SQL FKs (users live in user-service). Refs are omitted intentionally.
 
-Table celebrities_feed {
-  id integer
-  user_id string [note: 'if follower counts more than 10000']
-  posts list
-  created_at datetime
+Table author_feeds {
+  user_id    varchar(64) [pk, note: 'Redis key author_posts:{user_id}']
+  entries    jsonb       [note: 'Array<FeedEntry> (LPUSH/LTRIM), newest first, cap=500']
+  updated_at timestamp   [default: `now()`]
 }
 
-// Replication:
-// - master-slave (async)
-// - replication factor 3
-//
-// Sharding:
-// - key based by user_id
-
-Table users_feed {
-  id integer
-  user_id string
-  posts list
-  created_at datetime
+Table users_feeds {
+  user_id    varchar(64) [pk, note: 'Redis key users_feed:{user_id}']
+  entries    jsonb       [note: 'Array<FeedEntry> (R/W whole list on rebuild), cap=1000']
+  updated_at timestamp   [default: `now()`]
 }
 
-feedback service:
-// Replication:
-// - master-slave (async)
-// - replication factor 3
-//
-// Sharding:
-// - key based by post_id
-
-Table post_likes_sum {
-  post_id integer [primary key]
-  likes_count integer
+Table celebrity_feeds {
+  user_id    varchar(64) [pk, note: 'Redis key celebrities_feed:{user_id}']
+  entries    jsonb       [note: 'Array<FeedEntry> for celebrity author, cap=500']
+  updated_at timestamp   [default: `now()`]
 }
 
-Table post_comments_sum {
-  post_id integer [primary key]
-  comments_count integer
+Table celebrities {
+  user_id     varchar(64) [pk, note: 'Redis set key celebrities:set']
+  promoted_at timestamp    [default: `now()`]
 }
 
-Table post_like {
-  post_id integer [primary key]
-  user_id integer
+// Optional: document the FeedEntry payload shape used in lists
+// FeedEntry {
+//   post_id   bigint
+//   author_id varchar(64)
+//   media_url varchar(512) | null
+//   snippet   text | null
+//   tags      text[] | null
+//   created_at timestamp
+//   score     double
+// }
+
+
+feedback service database.dbml
+// Service: feedback-service
+// Replication: master-slave (async), RF=3
+// Sharding: key-based by post_id
+// Notes: No cross-service FKs enforced (posts/users live elsewhere)
+
+Table post_likes_sums {
+  post_id     bigint [pk, note: 'Shard key; 1 row per post']
+  likes_count bigint [not null, default: 0]
+  updated_at  timestamp
 }
 
-Table post_comment {
-  post_id integer [primary key]
-  user_id integer
-  comment_id integer
-  reply_id integer
-  text text
-  created_at timestamp
+Table post_comments_sums {
+  post_id        bigint [pk, note: 'Shard key; 1 row per post']
+  comments_count bigint [not null, default: 0]
+  updated_at     timestamp
 }
 
-message service:
-// Replication:
-// - master-master (async slave)
-// - replication factor 3
-//
-// Sharding:
-// - key based by chat_id
+Table post_likes {
+  post_id    bigint       [not null, note: 'Shard key']
+  user_id    varchar(64)  [not null, note: 'User identifier (string/UUID)']
+  created_at timestamp    [default: `now()`]
+
+  indexes {
+    (post_id, user_id) [pk, name: 'pk_post_likes'] // composite PK prevents dup likes
+    post_id            [name: 'idx_post_likes_post']
+    user_id            [name: 'idx_post_likes_user']
+  }
+  // cross-service references intentionally not enforced:
+  // posts(id), users(id)
+}
+
+Table post_comments {
+  id         bigint       [pk, increment]
+  post_id    bigint       [not null, note: 'Shard key']
+  user_id    varchar(64)  [not null]
+  reply_id   bigint       [note: 'Self-reply; null for top-level']
+  text       text         [not null]
+  created_at timestamp    [default: `now()`]
+
+  indexes {
+    post_id          [name: 'idx_post_comments_post']
+    user_id          [name: 'idx_post_comments_user']
+    reply_id         [name: 'idx_post_comments_reply']
+    (post_id, id)    [name: 'idx_post_comments_post_id']
+  }
+  // cross-service references intentionally not enforced:
+  // posts(id), users(id)
+}
+
+/* Top-level refs (DBML requires this): */
+Ref: post_comments.reply_id > post_comments.id
+
+message service database.dbml:
+// Service: message-service
+// Replication: master-master (async slaves), RF=3
+// Sharding: key-based by chat_id (conceptual; single DB in this service code)
+// Notes: cross-service refs to users are intentionally not enforced here.
 
 Table chats {
-  id integer [primary key]
-  user_id integer
-  name varchar
-  created_at timestamp
+  id         bigint       [pk, increment]
+  name       varchar(200) [not null]
+  owner_id   varchar(64)  [not null, note: 'Creator user_id']
+  created_at timestamp    [default: `now()`]
+
+  indexes {
+    owner_id [name: 'idx_chats_owner']
+  }
 }
-Table chats_users {
-  chat_id integer
-  user_id integer
-  type string
-  created_at timestamp
+
+Table chat_users {
+  chat_id    bigint       [not null]
+  user_id    varchar(64)  [not null]
+  type       varchar(32)  [not null, note: 'member/admin/...']
+  created_at timestamp    [default: `now()`]
+
+  indexes {
+    (chat_id, user_id) [pk, name: 'pk_chat_users']
+    chat_id            [name: 'idx_chat_users_chat']
+    user_id            [name: 'idx_chat_users_user']
+  }
 }
+
 Table messages {
-  id integer [primary key]
-  user_id integer
-  chat_id integer
-  text text
-  is_seen bool
-  send_time timestamp
-  delivered_time timestamp
+  id             bigint       [pk, increment]
+  user_id        varchar(64)  [not null]
+  chat_id        bigint       [not null]
+  text           text
+  media_url      varchar(512)
+  is_seen        boolean      [not null, default: false]
+  send_time      timestamp    [not null]             // set by service
+  delivered_time timestamp                     
+
+  indexes {
+    chat_id           [name: 'idx_messages_chat']
+    (chat_id, id)     [name: 'idx_messages_chat_id_desc'] // paging by chat, newest first
+  }
 }
 
-Ref: chats.id < chats_users.chat_id
-Ref: chats.id < messages.chat_id
+Table message_seen {
+  message_id bigint      [not null]
+  user_id    varchar(64) [not null]
+  seen_at    timestamp   [not null, default: `now()`]
 
-post service:
-// Replication:
-// - master-slave (async)
-// - replication factor 3
-//
-// Sharding:
-// - key based by post_id
+  indexes {
+    (message_id, user_id) [pk, name: 'pk_message_seen']
+    message_id            [name: 'idx_message_seen_msg']
+    user_id               [name: 'idx_message_seen_user']
+  }
+}
+
+/* Top-level refs (diagram only; enforce locally, not cross-service) */
+Ref: chats.id < chat_users.chat_id
+Ref: chats.id < messages.chat_id
+Ref: messages.id < message_seen.message_id
+
+// Cross-service (users) – shown as comments to avoid enforcing external FKs:
+// users.user_id > chats.owner_id
+// users.user_id > chat_users.user_id
+// users.user_id > messages.user_id
+// users.user_id > message_seen.user_id
+
+
+post service database.dbml:
+// Service: post-service
+// Replication: master-slave (async), RF=3
+// Notes: Likes & comments live in feedback-service; media URL only
 
 Table posts {
-  id integer [primary key]
-  user_id integer
-  description text
-  media url [note: 'Link to content']
-  likes integer
-  views integer
-  created_at timestamp
+  id          bigint       [pk, increment]
+  user_id     varchar(64)  [not null]
+  description text         [not null]
+  media_url   varchar(512) [note: 'URL from media-service']
+  views       bigint       [not null, default: 0]
+  created_at  timestamp    [default: `now()`]
+  updated_at  timestamp    [default: `now()`]
+
+  indexes {
+    user_id          [name: 'idx_posts_user']
+    (user_id, id)    [name: 'idx_posts_user_id'] // for "recent by user"
+  }
+  // cross-service reference to users(id) intentionally not enforced
 }
+
 Table tags {
-  id integer [primary key]
-  name varchar
-  created_at timestamp
+  id         bigint       [pk, increment]
+  name       varchar(120) [not null, unique]
+  created_at timestamp    [default: `now()`]
 }
+
 Table posts_tags {
-  post_id integer
-  tag_id integer
-  created_at timestamp
-}
-Table comments {
-  id integer [primary key]
-  user_id integer
-  post_id integer
-  name varchar
-  text text
-  created_at timestamp
+  post_id    bigint       [not null]
+  tag_id     bigint       [not null]
+  created_at timestamp    [default: `now()`]
+
+  indexes {
+    (post_id, tag_id) [pk, name: 'pk_posts_tags'] // upsert-friendly dedupe
+    tag_id            [name: 'idx_posts_tags_tag']
+  }
 }
 
-Table likes {
-  id integer [primary key]
-  user_id integer
-  post_id integer
-  comment_id integer
-}
-
-table s3_media_store {
-  id integer [primary key]
-  data media
-}
-
-
+/* Top-level refs (DBML requires this): */
 Ref: posts.id < posts_tags.post_id
-Ref: tags.id < posts_tags.tag_id
-Ref: comments.post_id < posts.id
-Ref: posts.id < likes.post_id
+Ref: tags.id  < posts_tags.tag_id
 
-user service:
-// Replication:
-// - master-slave (async)
-// - replication factor 3
-//
-// Sharding:
-// - key based by user_id
+
+users service database.dbml
+// Service: user-service
+// Replication: master-slave (async), RF=3
+// Sharding: key-based by user_id (user_id encodes shard id like "shard-uuid")
+// Notes: FKs shown for clarity; in practice each shard DB holds its own partition.
 
 Table users {
-  id integer [primary key]
-  name varchar
-  photo url
-  created_at timestamp
+  id         bigint       [pk, increment]                     // internal numeric PK
+  user_id    varchar(64)  [unique, note: 'Stable external ID with shard prefix']
+  shard_id   int          [not null, note: 'For routing; also in JWT']
+  email      varchar(120) [unique, not null]
+  pass_hash  varchar(255) [not null]
+  name       varchar(100) [not null]
+  created_at timestamp    [default: `now()`]
+  updated_at timestamp    [default: `now()`]
+
+  indexes {
+    shard_id                // read routing
+    (email)                 // login path
+    (user_id)               // lookups by external id
+  }
 }
 
-Table user_data {
-  user_id integer [primary key]
+Table profiles {
+  user_id     varchar(64) [pk, note: 'Same as users.user_id']
   description text
-  city_id integer
-  education object
-  hobby object
+  city_id     bigint
+  education   jsonb
+  hobby       jsonb
+  updated_at  timestamp    [default: `now()`]
+
+  indexes {
+    city_id
+  }
 }
+
 Table cities {
-  id integer [primary key]
-  name varchar
+  id         bigint       [pk, increment]
+  name       varchar(120) [unique, not null]
 }
+
 Table interests {
-  id integer [primary key]
-  name varchar
+  id         bigint       [pk, increment]
+  name       varchar(120) [unique, not null]
 }
-Table interests_users {
-  interest_id integer
-  user_id integer
+
+Table interest_users {
+  user_id     varchar(64) [not null]
+  interest_id bigint      [not null]
+
+  indexes {
+    (user_id, interest_id) [pk, name: 'pk_interest_users']  // composite PK
+    user_id                 [name: 'idx_interest_users_user']
+    interest_id             [name: 'idx_interest_users_interest']
+  }
 }
 
 Table follows {
-  user_id integer
-  followed_id integer
-  created_at timestamp
+  user_id    varchar(64) [not null]  // follower
+  target_id  varchar(64) [not null]  // followee
+  created_at timestamp    [default: `now()`]
+
+  indexes {
+    (user_id, target_id) [pk, name: 'pk_follows']
+    user_id              [name: 'idx_follows_user']
+    target_id            [name: 'idx_follows_target']
+  }
 }
-Table relationship {
-  user_id integer
-  related_id integer
-  relationship_type integer
-  created_at timestamp
-}
+
 Table friends {
-  user_id integer
-  friend_id integer
-  created_at timestamp
+  user_id    varchar(64) [not null]
+  friend_id  varchar(64) [not null]
+  created_at timestamp    [default: `now()`]
+
+  indexes {
+    (user_id, friend_id) [pk, name: 'pk_friends']
+    user_id              [name: 'idx_friends_user']
+    friend_id            [name: 'idx_friends_friend']
+  }
 }
 
-Ref: users.id < user_data.user_id
-Ref: cities.id < user_data.city_id
-Ref: users.id < interests_users.user_id
-Ref: interests.id < interests_users.interest_id
+Table relationships {
+  user_id    varchar(64) [not null]
+  related_id varchar(64) [not null]
+  type       int         [not null, note: '1=Follow, 2=Friend, 3=Block (see code)']
+  created_at timestamp    [default: `now()`]
 
-Ref: users.id < follows.user_id
-Ref: users.id < relationship.user_id
-Ref: users.id < friends.user_id
+  indexes {
+    (user_id, related_id, type) [pk, name: 'pk_relationships']
+    user_id                     [name: 'idx_relationships_user']
+    related_id                  [name: 'idx_relationships_related']
+    (user_id, type)             [name: 'idx_relationships_user_type']
+  }
+}
 
-c4 design lvl 1:
+/* Top-level refs (diagram only; enforce per-shard in practice) */
+Ref: users.user_id  < profiles.user_id
+Ref: cities.id      < profiles.city_id
+
+Ref: users.user_id  < interest_users.user_id
+Ref: interests.id   < interest_users.interest_id
+
+Ref: users.user_id  < follows.user_id
+Ref: users.user_id  < follows.target_id
+
+Ref: users.user_id  < friends.user_id
+Ref: users.user_id  < friends.friend_id
+
+Ref: users.user_id  < relationships.user_id
+Ref: users.user_id  < relationships.related_id
+
+
+here now c4 designs
+c1 level:
 @startuml
 !include <C4/C4_Container>
 
@@ -242,7 +359,7 @@ Rel(mediaService, s3, "Uploads media files")
 Rel(cdn, s3, "Downloads media from origin s3")
 @enduml
 
-c2 level design:
+here the c2 level services:
 feed service:
 @startuml
 !include <C4/C4_Container>
@@ -347,6 +464,7 @@ Rel(postService, mediaService, "upload media")
 @enduml
 
 user service:
+
 @startuml
 !include <C4/C4_Container>
 

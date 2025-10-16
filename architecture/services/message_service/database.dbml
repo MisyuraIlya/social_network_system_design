@@ -1,0 +1,67 @@
+// Service: message-service
+// Replication: master-master (async slaves), RF=3
+// Sharding: key-based by chat_id (conceptual; single DB in this service code)
+// Notes: cross-service refs to users are intentionally not enforced here.
+
+Table chats {
+  id         bigint       [pk, increment]
+  name       varchar(200) [not null]
+  owner_id   varchar(64)  [not null, note: 'Creator user_id']
+  created_at timestamp    [default: `now()`]
+
+  indexes {
+    owner_id [name: 'idx_chats_owner']
+  }
+}
+
+Table chat_users {
+  chat_id    bigint       [not null]
+  user_id    varchar(64)  [not null]
+  type       varchar(32)  [not null, note: 'member/admin/...']
+  created_at timestamp    [default: `now()`]
+
+  indexes {
+    (chat_id, user_id) [pk, name: 'pk_chat_users']
+    chat_id            [name: 'idx_chat_users_chat']
+    user_id            [name: 'idx_chat_users_user']
+  }
+}
+
+Table messages {
+  id             bigint       [pk, increment]
+  user_id        varchar(64)  [not null]
+  chat_id        bigint       [not null]
+  text           text
+  media_url      varchar(512)
+  is_seen        boolean      [not null, default: false]
+  send_time      timestamp    [not null]             // set by service
+  delivered_time timestamp                     
+
+  indexes {
+    chat_id           [name: 'idx_messages_chat']
+    (chat_id, id)     [name: 'idx_messages_chat_id_desc'] // paging by chat, newest first
+  }
+}
+
+Table message_seen {
+  message_id bigint      [not null]
+  user_id    varchar(64) [not null]
+  seen_at    timestamp   [not null, default: `now()`]
+
+  indexes {
+    (message_id, user_id) [pk, name: 'pk_message_seen']
+    message_id            [name: 'idx_message_seen_msg']
+    user_id               [name: 'idx_message_seen_user']
+  }
+}
+
+/* Top-level refs (diagram only; enforce locally, not cross-service) */
+Ref: chats.id < chat_users.chat_id
+Ref: chats.id < messages.chat_id
+Ref: messages.id < message_seen.message_id
+
+// Cross-service (users) – shown as comments to avoid enforcing external FKs:
+// users.user_id > chats.owner_id
+// users.user_id > chat_users.user_id
+// users.user_id > messages.user_id
+// users.user_id > message_seen.user_id

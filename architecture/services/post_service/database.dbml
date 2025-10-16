@@ -1,0 +1,40 @@
+// Service: post-service
+// Replication: master-slave (async), RF=3
+// Notes: Likes & comments live in feedback-service; media URL only
+
+Table posts {
+  id          bigint       [pk, increment]
+  user_id     varchar(64)  [not null]
+  description text         [not null]
+  media_url   varchar(512) [note: 'URL from media-service']
+  views       bigint       [not null, default: 0]
+  created_at  timestamp    [default: `now()`]
+  updated_at  timestamp    [default: `now()`]
+
+  indexes {
+    user_id          [name: 'idx_posts_user']
+    (user_id, id)    [name: 'idx_posts_user_id'] // for "recent by user"
+  }
+  // cross-service reference to users(id) intentionally not enforced
+}
+
+Table tags {
+  id         bigint       [pk, increment]
+  name       varchar(120) [not null, unique]
+  created_at timestamp    [default: `now()`]
+}
+
+Table posts_tags {
+  post_id    bigint       [not null]
+  tag_id     bigint       [not null]
+  created_at timestamp    [default: `now()`]
+
+  indexes {
+    (post_id, tag_id) [pk, name: 'pk_posts_tags'] // upsert-friendly dedupe
+    tag_id            [name: 'idx_posts_tags_tag']
+  }
+}
+
+/* Top-level refs (DBML requires this): */
+Ref: posts.id < posts_tags.post_id
+Ref: tags.id  < posts_tags.tag_id

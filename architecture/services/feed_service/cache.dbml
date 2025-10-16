@@ -1,0 +1,44 @@
+// Service: feed-service (Redis-backed)
+// Storage model (from code):
+// - author_posts:{user_id}     -> LIST of FeedEntry (max 500)
+// - users_feed:{user_id}       -> LIST of FeedEntry (max 1000)
+// - celebrities_feed:{user_id} -> LIST of FeedEntry (max 500)
+// - celebrities:set            -> SET of celebrity user IDs
+//
+// Notes:
+// - We represent Redis lists/sets as logical tables for visualization.
+// - No real SQL FKs (users live in user-service). Refs are omitted intentionally.
+
+Table author_feeds {
+  user_id    varchar(64) [pk, note: 'Redis key author_posts:{user_id}']
+  entries    jsonb       [note: 'Array<FeedEntry> (LPUSH/LTRIM), newest first, cap=500']
+  updated_at timestamp   [default: `now()`]
+}
+
+Table users_feeds {
+  user_id    varchar(64) [pk, note: 'Redis key users_feed:{user_id}']
+  entries    jsonb       [note: 'Array<FeedEntry> (R/W whole list on rebuild), cap=1000']
+  updated_at timestamp   [default: `now()`]
+}
+
+Table celebrity_feeds {
+  user_id    varchar(64) [pk, note: 'Redis key celebrities_feed:{user_id}']
+  entries    jsonb       [note: 'Array<FeedEntry> for celebrity author, cap=500']
+  updated_at timestamp   [default: `now()`]
+}
+
+Table celebrities {
+  user_id     varchar(64) [pk, note: 'Redis set key celebrities:set']
+  promoted_at timestamp    [default: `now()`]
+}
+
+// Optional: document the FeedEntry payload shape used in lists
+// FeedEntry {
+//   post_id   bigint
+//   author_id varchar(64)
+//   media_url varchar(512) | null
+//   snippet   text | null
+//   tags      text[] | null
+//   created_at timestamp
+//   score     double
+// }
