@@ -3,22 +3,20 @@
 
 Container(apiGateway, "API Gateway")
 Container(kafka, "Kafka", "")
-Container(s3, "MediaService", "")
-Container(notifycationService, "Notification service", "")
-
+Container(mediaService, "Media Service", "Uploads/serves media via REST")
+Container(notificationService, "Notification Service", "")
 
 System_Boundary(MessageSystem, "Message Service") {
     Container(MessageService, "Message Service", "Processes messages")
-    ContainerDb(redis, "redis")
-    ContainerDb(pgSQL, "pgSQL")
+    ContainerDb(redis, "Redis")
+    ContainerDb(pgSQL, "PostgreSQL")
 }
 
 Rel(apiGateway, MessageService, "request", "REST")
 Rel(MessageService, redis, "store popular chats")
 Rel(MessageService, pgSQL, "store messages")
-Rel(MessageService, s3, "upload media")
-Rel(MessageService, kafka, "new message")
-Rel(kafka, notifycationService, "")
-
+Rel(MessageService, mediaService, "upload media", "REST")
+Rel(MessageService, kafka, "publish: messages.created")
+Rel(kafka, notificationService, "consume: messages.created")
 
 @enduml
