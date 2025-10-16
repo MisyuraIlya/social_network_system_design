@@ -1,7 +1,11 @@
 package message
 
 import (
+	"time"
+
 	"message-service/internal/shared/db"
+
+	"gorm.io/gorm/clause"
 )
 
 type Repository interface {
@@ -22,8 +26,17 @@ func (r *repo) Create(m *Message) (*Message, error) {
 }
 
 func (r *repo) MarkSeen(messageID int64, userID string) error {
-	return r.store.Base.Model(&Message{}).Where("id=? AND user_id=?", messageID, userID).
-		Update("is_seen", true).Error
+	ms := &MessageSeen{
+		MessageID: messageID,
+		UserID:    userID,
+		SeenAt:    time.Now(),
+	}
+	return r.store.Base.Clauses(
+		clause.OnConflict{
+			Columns:   []clause.Column{{Name: "message_id"}, {Name: "user_id"}},
+			DoNothing: true,
+		},
+	).Create(ms).Error
 }
 
 func (r *repo) ListByChat(chatID int64, limit, offset int) ([]Message, error) {

@@ -10,5 +10,6 @@ func AutoMigrateAll(store *db.Store) error {
 	return store.Base.AutoMigrate(
 		&chat.Chat{}, &chat.ChatUser{},
 		&message.Message{},
+		&message.MessageSeen{},
 	)
 }

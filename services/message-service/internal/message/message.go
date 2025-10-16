@@ -18,3 +18,9 @@ type SendReq struct {
 	Text     string `json:"text"`
 	MediaURL string `json:"media_url"`
 }
+
+type MessageSeen struct {
+	MessageID int64     `gorm:"primaryKey;index" json:"message_id"`
+	UserID    string    `gorm:"primaryKey;size:64;index" json:"user_id"`
+	SeenAt    time.Time `json:"seen_at"`
+}
