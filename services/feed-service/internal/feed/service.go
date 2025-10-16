@@ -14,6 +14,12 @@ type Service interface {
 	GetAuthorFeed(ctx context.Context, authorID string, limit, offset int) ([]FeedEntry, error)
 	GetHomeFeed(ctx context.Context, userID string, limit, offset int) ([]FeedEntry, error)
 	RebuildHomeFeed(ctx context.Context, userID, bearer string, limit int) error
+
+	// Celebrities
+	GetCelebrityFeed(ctx context.Context, userID string, limit, offset int) ([]FeedEntry, error)
+	PromoteCelebrity(ctx context.Context, userID string) error
+	DemoteCelebrity(ctx context.Context, userID string) error
+	ListCelebrities(ctx context.Context) ([]string, error)
 }
 
 type service struct {
@@ -107,4 +113,22 @@ func (s *service) RebuildHomeFeed(ctx context.Context, userID, bearer string, li
 		all = all[:limit]
 	}
 	return s.repo.StoreHomeFeed(ctx, userID, all)
+}
+
+// ---- Celebrities ----
+
+func (s *service) GetCelebrityFeed(ctx context.Context, userID string, limit, offset int) ([]FeedEntry, error) {
+	return s.repo.GetCelebrityFeed(ctx, userID, limit, offset)
+}
+
+func (s *service) PromoteCelebrity(ctx context.Context, userID string) error {
+	return s.repo.AddCelebrity(ctx, userID)
+}
+
+func (s *service) DemoteCelebrity(ctx context.Context, userID string) error {
+	return s.repo.RemoveCelebrity(ctx, userID)
+}
+
+func (s *service) ListCelebrities(ctx context.Context) ([]string, error) {
+	return s.repo.ListCelebrities(ctx)
 }

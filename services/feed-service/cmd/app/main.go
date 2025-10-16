@@ -109,6 +109,8 @@ func main() {
 
 	// Public:
 	mux.Handle("GET /users/{user_id}/feed", httpx.Wrap(h.GetAuthorFeed))
+	mux.Handle("GET /celebrities/{user_id}/feed", httpx.Wrap(h.GetCelebrityFeed))
+	mux.Handle("GET /celebrities", httpx.Wrap(h.ListCelebrities))
 
 	// Protected:
 	protect := func(pattern string, handler http.Handler) {
@@ -116,6 +118,11 @@ func main() {
 	}
 	protect("GET /feed", httpx.Wrap(h.GetHomeFeed))
 	protect("POST /feed/rebuild", httpx.Wrap(h.RebuildHomeFeed))
+
+	// Manage celebrity set (keep behind auth; later you can gate with roles/claims)
+	protect("POST /celebrities/{user_id}", httpx.Wrap(h.PromoteCelebrity))
+	protect("DELETE /celebrities/{user_id}", httpx.Wrap(h.DemoteCelebrity))
+
 	protect("GET /whoami", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		uid, err := httpx.UserFromCtx(r)
 		if err != nil {

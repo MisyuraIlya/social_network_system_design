@@ -15,6 +15,9 @@ const (
 	keyUsersFeedFmt   = "users_feed:%s"
 	keyCelebFeedFmt   = "celebrities_feed:%s"
 
+	// set storing celebrity user IDs
+	keyCelebSet = "celebrities:set"
+
 	maxPerAuthor = 500
 	maxHomeSize  = 1000
 )
@@ -24,6 +27,13 @@ type Repository interface {
 	GetAuthorFeed(ctx context.Context, authorID string, limit, offset int) ([]FeedEntry, error)
 	StoreHomeFeed(ctx context.Context, userID string, entries []FeedEntry) error
 	GetHomeFeed(ctx context.Context, userID string, limit, offset int) ([]FeedEntry, error)
+
+	// Celebrities
+	AddCelebrity(ctx context.Context, userID string) error
+	RemoveCelebrity(ctx context.Context, userID string) error
+	IsCelebrity(ctx context.Context, userID string) (bool, error)
+	ListCelebrities(ctx context.Context) ([]string, error)
+	GetCelebrityFeed(ctx context.Context, userID string, limit, offset int) ([]FeedEntry, error)
 }
 
 type repo struct {
@@ -32,8 +42,9 @@ type repo struct {
 
 func NewRepository(rdb *redis.Client) Repository { return &repo{rdb: rdb} }
 
-func (r *repo) authorKey(uid string) string   { return fmt.Sprintf(keyAuthorPostsFmt, uid) }
-func (r *repo) userFeedKey(uid string) string { return fmt.Sprintf(keyUsersFeedFmt, uid) }
+func (r *repo) authorKey(uid string) string    { return fmt.Sprintf(keyAuthorPostsFmt, uid) }
+func (r *repo) userFeedKey(uid string) string  { return fmt.Sprintf(keyUsersFeedFmt, uid) }
+func (r *repo) celebFeedKey(uid string) string { return fmt.Sprintf(keyCelebFeedFmt, uid) }
 
 func (r *repo) HandlePostEvent(ctx context.Context, ev PostEvent) error {
 	entry := FeedEntry{
@@ -46,11 +57,23 @@ func (r *repo) HandlePostEvent(ctx context.Context, ev PostEvent) error {
 		Score:     float64(ev.CreatedAt.Unix()),
 	}
 	b, _ := json.Marshal(entry)
+
 	pipe := r.rdb.TxPipeline()
+	// Always append to author feed
 	pipe.LPush(ctx, r.authorKey(ev.UserID), b)
 	pipe.LTrim(ctx, r.authorKey(ev.UserID), 0, maxPerAuthor-1)
-	_, err := pipe.Exec(ctx)
-	return err
+
+	// If author is a celebrity, append to celebrity feed as well
+	isCeleb, err := r.IsCelebrity(ctx, ev.UserID)
+	if err == nil && isCeleb {
+		pipe.LPush(ctx, r.celebFeedKey(ev.UserID), b)
+		pipe.LTrim(ctx, r.celebFeedKey(ev.UserID), 0, maxPerAuthor-1)
+	}
+	_, execErr := pipe.Exec(ctx)
+	if execErr != nil {
+		return execErr
+	}
+	return nil
 }
 
 func (r *repo) GetAuthorFeed(ctx context.Context, authorID string, limit, offset int) ([]FeedEntry, error) {
@@ -88,6 +111,40 @@ func (r *repo) StoreHomeFeed(ctx context.Context, userID string, entries []FeedE
 func (r *repo) GetHomeFeed(ctx context.Context, userID string, limit, offset int) ([]FeedEntry, error) {
 	key := r.userFeedKey(userID)
 	raws, err := r.rdb.LRange(ctx, key, int64(offset), int64(offset+limit-1)).Result()
+	if err != nil && err != redis.Nil {
+		return nil, err
+	}
+	out := make([]FeedEntry, 0, len(raws))
+	for _, s := range raws {
+		var e FeedEntry
+		if json.Unmarshal([]byte(s), &e) == nil {
+			out = append(out, e)
+		}
+	}
+	return out, nil
+}
+
+// ---- Celebrities ----
+
+func (r *repo) AddCelebrity(ctx context.Context, userID string) error {
+	return r.rdb.SAdd(ctx, keyCelebSet, userID).Err()
+}
+
+func (r *repo) RemoveCelebrity(ctx context.Context, userID string) error {
+	return r.rdb.SRem(ctx, keyCelebSet, userID).Err()
+}
+
+func (r *repo) IsCelebrity(ctx context.Context, userID string) (bool, error) {
+	n, err := r.rdb.SIsMember(ctx, keyCelebSet, userID).Result()
+	return n, err
+}
+
+func (r *repo) ListCelebrities(ctx context.Context) ([]string, error) {
+	return r.rdb.SMembers(ctx, keyCelebSet).Result()
+}
+
+func (r *repo) GetCelebrityFeed(ctx context.Context, userID string, limit, offset int) ([]FeedEntry, error) {
+	raws, err := r.rdb.LRange(ctx, r.celebFeedKey(userID), int64(offset), int64(offset+limit-1)).Result()
 	if err != nil && err != redis.Nil {
 		return nil, err
 	}
