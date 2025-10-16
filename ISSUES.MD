@@ -33,3 +33,15 @@ ListByChat: require membership.
 MarkSeen: require membership (and optionally that the message belongs to that chat).
 
 Optional: store sender’s membership at send-time; double check on read.
+
+4. Post upload flow lacks bearer -> media-service
+
+post-service UploadAndCreate → uploadToMediaService calls media-service without Authorization.
+
+Impact: Works only when media-service JWT_SECRET is empty (dev). Fails in prod (401).
+
+Fix:
+
+In post/handler.UploadAndCreate, extract bearer (add httpx.BearerToken helper like in other services) and pass it into svc.UploadAndCreate.
+
+Thread the bearer to uploadToMediaService and set Authorization: Bearer <token>.

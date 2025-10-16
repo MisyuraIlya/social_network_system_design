@@ -9,6 +9,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"post-service/internal/kafka"
@@ -21,7 +22,7 @@ type Service interface {
 	GetByID(id uint64) (*Post, error)
 	ListByUser(userID string, limit, offset int) ([]Post, error)
 	AddView(postID uint64) error
-	UploadAndCreate(uid string, filename string, file io.Reader, description string, tags []string) (*Post, error)
+	UploadAndCreate(uid string, filename string, file io.Reader, description string, tags []string, bearer string) (*Post, error)
 }
 
 type service struct {
@@ -78,15 +79,15 @@ func (s *service) ListByUser(userID string, limit, offset int) ([]Post, error) {
 
 func (s *service) AddView(postID uint64) error { return s.repo.IncView(postID) }
 
-func (s *service) UploadAndCreate(uid, filename string, file io.Reader, description string, tags []string) (*Post, error) {
-	mediaURL, err := uploadToMediaService(filename, file)
+func (s *service) UploadAndCreate(uid, filename string, file io.Reader, description string, tags []string, bearer string) (*Post, error) {
+	mediaURL, err := uploadToMediaService(filename, file, bearer)
 	if err != nil {
 		return nil, err
 	}
 	return s.Create(uid, CreateReq{Description: description, MediaURL: mediaURL, Tags: tags})
 }
 
-func uploadToMediaService(filename string, r io.Reader) (string, error) {
+func uploadToMediaService(filename string, r io.Reader, bearer string) (string, error) {
 	base := os.Getenv("MEDIA_SERVICE_URL")
 	if base == "" {
 		base = "http://media-service:8088"
@@ -101,6 +102,9 @@ func uploadToMediaService(filename string, r io.Reader) (string, error) {
 
 	req, _ := http.NewRequest("POST", fmt.Sprintf("%s/media/upload", base), &body)
 	req.Header.Set("Content-Type", w.FormDataContentType())
+	if strings.TrimSpace(bearer) != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

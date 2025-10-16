@@ -55,7 +55,9 @@ func (h *Handler) UploadAndCreate(w http.ResponseWriter, r *http.Request) error 
 		tags = nil
 	}
 
-	p, err := h.svc.UploadAndCreate(uid, hdr.Filename, file, description, tags)
+	bearer := httpx.BearerToken(r)
+
+	p, err := h.svc.UploadAndCreate(uid, hdr.Filename, file, description, tags, bearer)
 	if err != nil {
 		return err
 	}
