@@ -7,7 +7,7 @@ type Post struct {
 	UserID      string    `gorm:"index;size:64" json:"user_id"`
 	Description string    `json:"description"`
 	MediaURL    string    `gorm:"size:512" json:"media"`
-	Likes       uint64    `json:"likes"`
+	Likes       uint64    `json:"-"` // hidden; feedback-service is the source of truth
 	Views       uint64    `json:"views"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`

@@ -1,7 +1,6 @@
 package migrate
 
 import (
-	"post-service/internal/comment"
 	"post-service/internal/post"
 	"post-service/internal/shared/db"
 	"post-service/internal/tag"
@@ -12,6 +11,5 @@ func AutoMigrateAll(store *db.Store) error {
 		&post.Post{},
 		&post.PostTag{},
 		&tag.Tag{},
-		&comment.Comment{},
 	)
 }

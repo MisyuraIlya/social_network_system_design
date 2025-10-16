@@ -14,7 +14,6 @@ type Repository interface {
 	GetByID(id uint64) (*Post, error)
 	ListByUser(userID string, limit, offset int) ([]Post, error)
 	AttachTags(postID uint64, tagIDs []uint64) error
-	IncLike(postID uint64) error
 	IncView(postID uint64) error
 }
 
@@ -55,11 +54,6 @@ func (r *repo) AttachTags(postID uint64, tagIDs []uint64) error {
 		items = append(items, PostTag{PostID: postID, TagID: id})
 	}
 	return r.store.Base.Clauses(clause.OnConflict{DoNothing: true}).Create(&items).Error
-}
-
-func (r *repo) IncLike(postID uint64) error {
-	res := r.store.Base.Model(&Post{}).Where("id = ?", postID).UpdateColumn("likes", gorm.Expr("likes + 1"))
-	return res.Error
 }
 
 func (r *repo) IncView(postID uint64) error {

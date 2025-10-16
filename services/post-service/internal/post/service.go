@@ -20,7 +20,6 @@ type Service interface {
 	Create(uid string, in CreateReq) (*Post, error)
 	GetByID(id uint64) (*Post, error)
 	ListByUser(userID string, limit, offset int) ([]Post, error)
-	Like(uid string, postID uint64) error
 	AddView(postID uint64) error
 	UploadAndCreate(uid string, filename string, file io.Reader, description string, tags []string) (*Post, error)
 }
@@ -72,14 +71,11 @@ func (s *service) Create(uid string, in CreateReq) (*Post, error) {
 }
 
 func (s *service) GetByID(id uint64) (*Post, error) { return s.repo.GetByID(id) }
+
 func (s *service) ListByUser(userID string, limit, offset int) ([]Post, error) {
 	return s.repo.ListByUser(userID, limit, offset)
 }
 
-func (s *service) Like(uid string, postID uint64) error {
-	_ = uid
-	return s.repo.IncLike(postID)
-}
 func (s *service) AddView(postID uint64) error { return s.repo.IncView(postID) }
 
 func (s *service) UploadAndCreate(uid, filename string, file io.Reader, description string, tags []string) (*Post, error) {

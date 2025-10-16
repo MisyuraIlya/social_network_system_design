@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"time"
 
-	"post-service/internal/comment"
 	"post-service/internal/kafka"
 	"post-service/internal/migrate"
 	"post-service/internal/post"
@@ -96,9 +95,6 @@ func main() {
 	postRepo := post.NewRepository(store)
 	postSvc := post.NewService(postRepo, tagSvc, kWriter)
 
-	commentRepo := comment.NewRepository(store)
-	commentSvc := comment.NewService(commentRepo)
-
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.Handler())
 
@@ -106,20 +102,13 @@ func main() {
 	mux.Handle("GET /posts/{post_id}", httpx.Wrap(ph.GetByID))
 	mux.Handle("GET /users/{user_id}/posts", httpx.Wrap(ph.ListByUser))
 
-	ch := comment.NewHandler(commentSvc)
-	mux.Handle("GET /posts/{post_id}/comments", httpx.Wrap(ch.ListByPost))
-
 	protect := func(pattern string, h http.Handler) {
 		mux.Handle(pattern, httpx.AuthMiddleware(h))
 	}
 
 	protect("POST /posts", httpx.Wrap(ph.Create))
-	protect("POST /posts/{post_id}/like", httpx.Wrap(ph.Like))
 	protect("POST /posts/{post_id}/view", httpx.Wrap(ph.AddView))
 	protect("POST /posts/upload", httpx.Wrap(ph.UploadAndCreate))
-
-	protect("POST /comments", httpx.Wrap(ch.Create))
-	protect("POST /comments/{comment_id}/like", httpx.Wrap(ch.Like))
 
 	protect("GET /whoami", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		uid, err := httpx.UserFromCtx(r)

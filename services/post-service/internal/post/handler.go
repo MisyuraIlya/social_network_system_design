@@ -1,10 +1,12 @@
 package post
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"strings"
 
+	"post-service/internal/feedback"
 	"post-service/internal/shared/httpx"
 	"post-service/internal/shared/validate"
 )
@@ -67,7 +69,25 @@ func (h *Handler) GetByID(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	httpx.WriteJSON(w, p, http.StatusOK)
+
+	// Enrich counts from feedback-service
+	ctx, cancel := context.WithTimeout(r.Context(), feedback.DefaultTimeout)
+	defer cancel()
+	fb := feedback.NewClient("")
+	likes, comments, _ := fb.GetCounts(ctx, p.ID)
+
+	out := map[string]any{
+		"id":          p.ID,
+		"user_id":     p.UserID,
+		"description": p.Description,
+		"media":       p.MediaURL,
+		"views":       p.Views,
+		"likes":       likes,
+		"comments":    comments,
+		"created_at":  p.CreatedAt,
+		"updated_at":  p.UpdatedAt,
+	}
+	httpx.WriteJSON(w, out, http.StatusOK)
 	return nil
 }
 
@@ -80,19 +100,6 @@ func (h *Handler) ListByUser(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	httpx.WriteJSON(w, map[string]any{"items": items, "limit": limit, "offset": offset}, http.StatusOK)
-	return nil
-}
-
-func (h *Handler) Like(w http.ResponseWriter, r *http.Request) error {
-	uid, err := httpx.UserFromCtx(r)
-	if err != nil {
-		return err
-	}
-	id, _ := strconv.ParseUint(r.PathValue("post_id"), 10, 64)
-	if err := h.svc.Like(uid, id); err != nil {
-		return err
-	}
-	httpx.WriteJSON(w, map[string]string{"status": "ok"}, http.StatusOK)
 	return nil
 }
 
