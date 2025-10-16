@@ -159,315 +159,6 @@ func main() {
 	log.Fatal(srv.ListenAndServe())
 }
 
-services/user-service/internal/interest/handler.go
-package interest
-
-import (
-	"net/http"
-	"strconv"
-
-	"users-service/internal/shared/httpx"
-	"users-service/internal/shared/validate"
-)
-
-type Handler struct{ svc Service }
-
-func NewHandler(s Service) *Handler { return &Handler{svc: s} }
-
-type CreateReq struct {
-	Name string `json:"name" validate:"required"`
-}
-
-func (h *Handler) Create(w http.ResponseWriter, r *http.Request) error {
-	_, shardID, err := httpx.UserFromCtx(r)
-	if err != nil {
-		return err
-	}
-	in, err := httpx.Decode[CreateReq](r)
-	if err != nil {
-		return err
-	}
-	if err := validate.Struct(in); err != nil {
-		return err
-	}
-	it, err := h.svc.Create(shardID, in.Name)
-	if err != nil {
-		return err
-	}
-	httpx.WriteJSON(w, map[string]any{"id": it.ID, "name": it.Name}, http.StatusCreated)
-	return nil
-}
-
-func (h *Handler) Attach(w http.ResponseWriter, r *http.Request) error {
-	uid, _, err := httpx.UserFromCtx(r)
-	if err != nil {
-		return err
-	}
-	id, _ := strconv.ParseUint(r.PathValue("interest_id"), 10, 64)
-	if id == 0 {
-		return httpx.ErrUnauthorized
-	}
-	if err := h.svc.Attach(uid, id); err != nil {
-		return err
-	}
-	httpx.WriteJSON(w, map[string]string{"status": "ok"}, http.StatusOK)
-	return nil
-}
-
-func (h *Handler) Detach(w http.ResponseWriter, r *http.Request) error {
-	uid, _, err := httpx.UserFromCtx(r)
-	if err != nil {
-		return err
-	}
-	id, _ := strconv.ParseUint(r.PathValue("interest_id"), 10, 64)
-	if id == 0 {
-		return httpx.ErrUnauthorized
-	}
-	if err := h.svc.Detach(uid, id); err != nil {
-		return err
-	}
-	httpx.WriteJSON(w, map[string]string{"status": "ok"}, http.StatusOK)
-	return nil
-}
-
-func (h *Handler) ListMine(w http.ResponseWriter, r *http.Request) error {
-	uid, _, err := httpx.UserFromCtx(r)
-	if err != nil {
-		return err
-	}
-	limit := httpx.QueryInt(r, "limit", 50)
-	offset := httpx.QueryInt(r, "offset", 0)
-	items, err := h.svc.List(uid, limit, offset)
-	if err != nil {
-		return err
-	}
-	httpx.WriteJSON(w, map[string]any{"items": items, "limit": limit, "offset": offset}, http.StatusOK)
-	return nil
-}
-
-services/user-service/internal/interest/interest.go
-package interest
-
-type City struct {
-	ID   uint64 `gorm:"primaryKey" json:"id"`
-	Name string `gorm:"uniqueIndex;size:120" json:"name"`
-}
-type Interest struct {
-	ID   uint64 `gorm:"primaryKey" json:"id"`
-	Name string `gorm:"uniqueIndex;size:120" json:"name"`
-}
-type InterestUser struct {
-	UserID     string `gorm:"primaryKey;size:64"`
-	InterestID uint64 `gorm:"primaryKey"`
-}
-
-services/user-service/internal/interest/repository.go
-package interest
-
-import (
-	"users-service/internal/shared/db"
-	"users-service/internal/shared/shard"
-
-	"gorm.io/gorm"
-)
-
-type Repository interface {
-	// NEW:
-	Create(shardID int, name string) (*Interest, error)
-
-	Attach(uid string, interestID uint64) error
-	Detach(uid string, interestID uint64) error
-	List(uid string, limit, offset int) ([]Interest, error)
-}
-
-type repo struct{ store *db.Store }
-
-func NewRepository(s *db.Store) Repository { return &repo{store: s} }
-
-func (r *repo) Create(shardID int, name string) (*Interest, error) {
-	in := &Interest{Name: name}
-	if err := r.store.Write(shardID).FirstOrCreate(in, "name = ?", name).Error; err != nil {
-		return nil, err
-	}
-	return in, nil
-}
-
-func (r *repo) Attach(uid string, interestID uint64) error {
-	sh, _ := shard.Extract(uid)
-	return r.store.Write(sh).FirstOrCreate(&InterestUser{UserID: uid, InterestID: interestID}).Error
-}
-func (r *repo) Detach(uid string, interestID uint64) error {
-	sh, _ := shard.Extract(uid)
-	return r.store.Write(sh).Delete(&InterestUser{}, "user_id=? AND interest_id=?", uid, interestID).Error
-}
-func (r *repo) List(uid string, limit, offset int) ([]Interest, error) {
-	sh, _ := shard.Extract(uid)
-	var ints []Interest
-	err := r.store.Use(sh).
-		Joins("JOIN interest_users iu ON iu.interest_id = interests.id AND iu.user_id = ?", uid).
-		Model(&Interest{}).Limit(limit).Offset(offset).Find(&ints).Error
-	return ints, err
-}
-
-var _ = gorm.ErrRecordNotFound
-
-services/user-service/internal/interest/service.go
-package interest
-
-type Service interface {
-	Create(shardID int, name string) (*Interest, error)
-
-	Attach(uid string, interestID uint64) error
-	Detach(uid string, interestID uint64) error
-	List(uid string, limit, offset int) ([]Interest, error)
-}
-
-type service struct{ repo Repository }
-
-func NewService(r Repository) Service { return &service{repo: r} }
-
-func (s *service) Create(shardID int, name string) (*Interest, error) {
-	return s.repo.Create(shardID, name)
-}
-func (s *service) Attach(uid string, interestID uint64) error { return s.repo.Attach(uid, interestID) }
-func (s *service) Detach(uid string, interestID uint64) error { return s.repo.Detach(uid, interestID) }
-func (s *service) List(uid string, limit, offset int) ([]Interest, error) {
-	return s.repo.List(uid, limit, offset)
-}
-
-services/user-service/internal/migrate/migrate.go
-package migrate
-
-import (
-	"users-service/internal/interest"
-	"users-service/internal/profile"
-	"users-service/internal/shared/db"
-	"users-service/internal/social"
-	"users-service/internal/user"
-)
-
-func AutoMigrateAll(store *db.Store, shardID int) error {
-	return store.Write(shardID).AutoMigrate(
-		&user.User{},
-		&profile.Profile{},
-		&interest.City{}, &interest.Interest{}, &interest.InterestUser{},
-		&social.Follow{}, &social.Friend{}, &social.Relationship{},
-	)
-}
-
-services/user-service/internal/profile/handler.go
-package profile
-
-import (
-	"net/http"
-
-	"users-service/internal/shared/httpx"
-)
-
-type Handler struct{ svc Service }
-
-func NewHandler(s Service) *Handler { return &Handler{svc: s} }
-
-func (h *Handler) Upsert(w http.ResponseWriter, r *http.Request) error {
-	uid, _, err := httpx.UserFromCtx(r)
-	if err != nil {
-		return err
-	}
-	in, err := httpx.Decode[UpsertReq](r)
-	if err != nil {
-		return err
-	}
-	if err := h.svc.Upsert(uid, in); err != nil {
-		return err
-	}
-	httpx.WriteJSON(w, map[string]string{"status": "ok"}, http.StatusOK)
-	return nil
-}
-func (h *Handler) GetPublic(w http.ResponseWriter, r *http.Request) error {
-	uid := r.PathValue("user_id")
-	p, err := h.svc.GetPublic(uid)
-	if err != nil {
-		return err
-	}
-	httpx.WriteJSON(w, p, http.StatusOK)
-	return nil
-}
-
-services/user-service/internal/profile/profile.go
-package profile
-
-import "time"
-
-type Profile struct {
-	UserID      string         `gorm:"primaryKey;size:64" json:"user_id"`
-	Description string         `json:"description"`
-	CityID      uint64         `json:"city_id"`
-	Education   map[string]any `gorm:"type:jsonb" json:"education"`
-	Hobby       map[string]any `gorm:"type:jsonb" json:"hobby"`
-	UpdatedAt   time.Time      `json:"updated_at"`
-}
-
-type UpsertReq struct {
-	Description string         `json:"description"`
-	CityID      uint64         `json:"city_id"`
-	Education   map[string]any `json:"education"`
-	Hobby       map[string]any `json:"hobby"`
-}
-
-services/user-service/internal/profile/repository.go
-package profile
-
-import (
-	"users-service/internal/shared/db"
-	"users-service/internal/shared/shard"
-
-	"gorm.io/gorm/clause"
-)
-
-type Repository interface {
-	Upsert(p *Profile) error
-	GetPublic(userID string) (*Profile, error)
-}
-type repo struct{ store *db.Store }
-
-func NewRepository(s *db.Store) Repository { return &repo{store: s} }
-
-func (r *repo) Upsert(p *Profile) error {
-	sh, _ := shard.Extract(p.UserID)
-	return r.store.Write(sh).Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "user_id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"description", "city_id", "education", "hobby", "updated_at"}),
-	}).Create(p).Error
-}
-func (r *repo) GetPublic(uid string) (*Profile, error) {
-	sh, _ := shard.Extract(uid)
-	var p Profile
-	if err := r.store.Use(sh).First(&p, "user_id = ?", uid).Error; err != nil {
-		return nil, err
-	}
-	return &p, nil
-}
-
-services/user-service/internal/profile/service.go
-package profile
-
-import "time"
-
-type Service interface {
-	Upsert(uid string, in UpsertReq) error
-	GetPublic(uid string) (*Profile, error)
-}
-type service struct{ repo Repository }
-
-func NewService(r Repository) Service { return &service{repo: r} }
-
-func (s *service) Upsert(uid string, in UpsertReq) error {
-	return s.repo.Upsert(&Profile{
-		UserID: uid, Description: in.Description, CityID: in.CityID,
-		Education: in.Education, Hobby: in.Hobby, UpdatedAt: time.Now(),
-	})
-}
-func (s *service) GetPublic(uid string) (*Profile, error) { return s.repo.GetPublic(uid) }
 
 services/user-service/internal/shared/db/sharded.go
 package db
@@ -609,6 +300,7 @@ func RedactDSN(dsn string) string {
 	return fmt.Sprintf("%s", parts)
 }
 
+
 services/user-service/internal/shared/httpx/httpx.go
 package httpx
 
@@ -697,6 +389,7 @@ func QueryInt(r *http.Request, key string, def int) int {
 	return n
 }
 
+
 services/user-service/internal/shared/jwt/jwt.go
 package jwt
 
@@ -742,6 +435,7 @@ func Parse(tok string) (string, int, error) {
 	return uid, int(shf), nil
 }
 
+
 services/user-service/internal/shared/shard/shard.go
 package shard
 
@@ -777,6 +471,233 @@ import "github.com/go-playground/validator/v10"
 var v = validator.New()
 
 func Struct(s any) error { return v.Struct(s) }
+
+
+services/user-service/internal/user/handler.go
+package user
+
+import (
+	"net/http"
+
+	"users-service/internal/shared/httpx"
+	"users-service/internal/shared/jwt"
+	"users-service/internal/shared/validate"
+)
+
+type Handler struct{ svc Service }
+
+func NewHandler(s Service) *Handler { return &Handler{svc: s} }
+
+func (h *Handler) Register(w http.ResponseWriter, r *http.Request) error {
+	body, err := httpx.Decode[RegisterReq](r)
+	if err != nil {
+		return err
+	}
+	if err = validate.Struct(body); err != nil {
+		return err
+	}
+	u, err := h.svc.Register(body.Email, body.Password, body.Name)
+	if err != nil {
+		return err
+	}
+	token, _ := jwt.Make(u.UserID, u.ShardID)
+	httpx.WriteJSON(w, map[string]any{
+		"user_id": u.UserID, "name": u.Name, "email": u.Email, "access_token": token,
+	}, http.StatusCreated)
+	return nil
+}
+
+func (h *Handler) Login(w http.ResponseWriter, r *http.Request) error {
+	body, err := httpx.Decode[LoginReq](r)
+	if err != nil {
+		return err
+	}
+	if err = validate.Struct(body); err != nil {
+		return err
+	}
+	u, err := h.svc.Login(body.Email, body.Password)
+	if err != nil {
+		return err
+	}
+	token, _ := jwt.Make(u.UserID, u.ShardID)
+	httpx.WriteJSON(w, map[string]any{
+		"message": "login successful", "user_id": u.UserID, "name": u.Name, "email": u.Email, "access_token": token,
+	}, http.StatusOK)
+	return nil
+}
+
+func (h *Handler) GetByID(w http.ResponseWriter, r *http.Request) error {
+	uid := r.PathValue("user_id")
+	u, err := h.svc.GetByUserID(uid)
+	if err != nil {
+		return err
+	}
+	httpx.WriteJSON(w, u, http.StatusOK)
+	return nil
+}
+
+func (h *Handler) ListMine(w http.ResponseWriter, r *http.Request) error {
+	_, shardID, err := httpx.UserFromCtx(r)
+	if err != nil {
+		return err
+	}
+	limit := httpx.QueryInt(r, "limit", 50)
+	offset := httpx.QueryInt(r, "offset", 0)
+	users, err := h.svc.ListMine(shardID, limit, offset)
+	if err != nil {
+		return err
+	}
+	httpx.WriteJSON(w, map[string]any{"shard_id": shardID, "limit": limit, "offset": offset, "items": users}, http.StatusOK)
+	return nil
+}
+
+
+services/user-service/internal/user/repository.go
+package user
+
+import (
+	"errors"
+	"users-service/internal/shared/db"
+	"users-service/internal/shared/shard"
+)
+
+type Repository interface {
+	Create(u *User) (*User, error)
+	GetByEmail(email string, shardID int) (*User, error)
+	GetByUserID(uid string) (*User, error)
+	ListByShard(shardID, limit, offset int) ([]User, error)
+}
+
+type repo struct{ store *db.Store }
+
+func NewRepository(s *db.Store) Repository { return &repo{store: s} }
+
+func (r *repo) Create(u *User) (*User, error) {
+	if err := r.store.Write(u.ShardID).Create(u).Error; err != nil {
+		return nil, err
+	}
+	return u, nil
+}
+func (r *repo) GetByEmail(email string, shardID int) (*User, error) {
+	var u User
+	err := r.store.Use(shardID).Where("email = ?", email).First(&u).Error
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+func (r *repo) GetByUserID(uid string) (*User, error) {
+	sh, ok := shard.Extract(uid)
+	if !ok {
+		return nil, errors.New("bad user_id")
+	}
+	var u User
+	if err := r.store.Use(sh).Where("user_id = ?", uid).First(&u).Error; err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+func (r *repo) ListByShard(shardID, limit, offset int) ([]User, error) {
+	var out []User
+	err := r.store.Use(shardID).Order("created_at DESC").Limit(limit).Offset(offset).Find(&out).Error
+	return out, err
+}
+
+
+services/user-service/internal/user/service.go
+package user
+
+import (
+	"crypto/rand"
+	"encoding/binary"
+	"errors"
+	"fmt"
+	"os"
+	"strconv"
+
+	"users-service/internal/shared/shard"
+
+	"golang.org/x/crypto/bcrypt"
+)
+
+type Service interface {
+	Register(email, password, name string) (*User, error)
+	Login(email, password string) (*User, error)
+	GetByUserID(uid string) (*User, error)
+	ListMine(shardID, limit, offset int) ([]User, error)
+}
+type service struct {
+	repo      Repository
+	numShards int
+}
+
+func NewService(r Repository) Service {
+	n := 1
+	if s := os.Getenv("NUM_SHARDS"); s != "" {
+		if v, e := strconv.Atoi(s); e == nil && v > 0 {
+			n = v
+		}
+	}
+	return &service{repo: r, numShards: n}
+}
+
+func (s *service) Register(email, password, name string) (*User, error) {
+	sh := shard.Pick(email, s.numShards)
+	if exist, _ := s.repo.GetByEmail(email, sh); exist != nil {
+		return nil, errors.New("user exists")
+	}
+	var b [8]byte
+	_, _ = rand.Read(b[:])
+	uid := fmt.Sprintf("%d-%x", sh, binary.BigEndian.Uint64(b[:]))
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, errors.New("hash fail")
+	}
+	return s.repo.Create(&User{
+		UserID: uid, ShardID: sh, Email: email, PassHash: string(hash), Name: name,
+	})
+}
+func (s *service) Login(email, password string) (*User, error) {
+	sh := shard.Pick(email, s.numShards)
+	u, err := s.repo.GetByEmail(email, sh)
+	if err != nil {
+		return nil, errors.New("wrong credentials")
+	}
+	if bcrypt.CompareHashAndPassword([]byte(u.PassHash), []byte(password)) != nil {
+		return nil, errors.New("wrong credentials")
+	}
+	return u, nil
+}
+func (s *service) GetByUserID(uid string) (*User, error) { return s.repo.GetByUserID(uid) }
+func (s *service) ListMine(shardID, limit, offset int) ([]User, error) {
+	return s.repo.ListByShard(shardID, limit, offset)
+}
+
+services/user-service/internal/user/user.go
+package user
+
+import "time"
+
+type User struct {
+	UserID    string    `gorm:"uniqueIndex;size:64" json:"user_id"`
+	ShardID   int       `gorm:"index" json:"shard_id"`
+	ID        uint      `gorm:"primaryKey" json:"-"`
+	Email     string    `gorm:"uniqueIndex;size:120" json:"email"`
+	PassHash  string    `gorm:"size:255" json:"-"`
+	Name      string    `gorm:"size:100" json:"name"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type RegisterReq struct {
+	Email    string `json:"email" validate:"required,email"`
+	Password string `json:"password" validate:"required,min=6"`
+	Name     string `json:"name" validate:"required"`
+}
+type LoginReq struct {
+	Email    string `json:"email" validate:"required,email"`
+	Password string `json:"password" validate:"required"`
+}
 
 services/user-service/internal/social/handler.go
 package social
@@ -1101,6 +1022,7 @@ func (r *repo) ListRelationships(uid string, typ, limit, offset int) ([]string, 
 	return out, nil
 }
 
+
 services/user-service/internal/social/service.go
 package social
 
@@ -1162,14 +1084,151 @@ type Relationship struct {
 	CreatedAt time.Time
 }
 
-services/user-service/internal/user/handler.go
-package user
+
+services/user-service/internal/profile/handler.go
+package profile
 
 import (
 	"net/http"
 
 	"users-service/internal/shared/httpx"
-	"users-service/internal/shared/jwt"
+)
+
+type Handler struct{ svc Service }
+
+func NewHandler(s Service) *Handler { return &Handler{svc: s} }
+
+func (h *Handler) Upsert(w http.ResponseWriter, r *http.Request) error {
+	uid, _, err := httpx.UserFromCtx(r)
+	if err != nil {
+		return err
+	}
+	in, err := httpx.Decode[UpsertReq](r)
+	if err != nil {
+		return err
+	}
+	if err := h.svc.Upsert(uid, in); err != nil {
+		return err
+	}
+	httpx.WriteJSON(w, map[string]string{"status": "ok"}, http.StatusOK)
+	return nil
+}
+func (h *Handler) GetPublic(w http.ResponseWriter, r *http.Request) error {
+	uid := r.PathValue("user_id")
+	p, err := h.svc.GetPublic(uid)
+	if err != nil {
+		return err
+	}
+	httpx.WriteJSON(w, p, http.StatusOK)
+	return nil
+}
+
+
+services/user-service/internal/profile/profile.go
+package profile
+
+import "time"
+
+type Profile struct {
+	UserID      string         `gorm:"primaryKey;size:64" json:"user_id"`
+	Description string         `json:"description"`
+	CityID      uint64         `json:"city_id"`
+	Education   map[string]any `gorm:"type:jsonb" json:"education"`
+	Hobby       map[string]any `gorm:"type:jsonb" json:"hobby"`
+	UpdatedAt   time.Time      `json:"updated_at"`
+}
+
+type UpsertReq struct {
+	Description string         `json:"description"`
+	CityID      uint64         `json:"city_id"`
+	Education   map[string]any `json:"education"`
+	Hobby       map[string]any `json:"hobby"`
+}
+
+services/user-service/internal/profile/repository.go
+package profile
+
+import (
+	"users-service/internal/shared/db"
+	"users-service/internal/shared/shard"
+
+	"gorm.io/gorm/clause"
+)
+
+type Repository interface {
+	Upsert(p *Profile) error
+	GetPublic(userID string) (*Profile, error)
+}
+type repo struct{ store *db.Store }
+
+func NewRepository(s *db.Store) Repository { return &repo{store: s} }
+
+func (r *repo) Upsert(p *Profile) error {
+	sh, _ := shard.Extract(p.UserID)
+	return r.store.Write(sh).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "user_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"description", "city_id", "education", "hobby", "updated_at"}),
+	}).Create(p).Error
+}
+func (r *repo) GetPublic(uid string) (*Profile, error) {
+	sh, _ := shard.Extract(uid)
+	var p Profile
+	if err := r.store.Use(sh).First(&p, "user_id = ?", uid).Error; err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+services/user-service/internal/profile/service.go
+package profile
+
+import "time"
+
+type Service interface {
+	Upsert(uid string, in UpsertReq) error
+	GetPublic(uid string) (*Profile, error)
+}
+type service struct{ repo Repository }
+
+func NewService(r Repository) Service { return &service{repo: r} }
+
+func (s *service) Upsert(uid string, in UpsertReq) error {
+	return s.repo.Upsert(&Profile{
+		UserID: uid, Description: in.Description, CityID: in.CityID,
+		Education: in.Education, Hobby: in.Hobby, UpdatedAt: time.Now(),
+	})
+}
+func (s *service) GetPublic(uid string) (*Profile, error) { return s.repo.GetPublic(uid) }
+
+
+services/user-service/internal/migrate/migrate.go
+package migrate
+
+import (
+	"users-service/internal/interest"
+	"users-service/internal/profile"
+	"users-service/internal/shared/db"
+	"users-service/internal/social"
+	"users-service/internal/user"
+)
+
+func AutoMigrateAll(store *db.Store, shardID int) error {
+	return store.Write(shardID).AutoMigrate(
+		&user.User{},
+		&profile.Profile{},
+		&interest.City{}, &interest.Interest{}, &interest.InterestUser{},
+		&social.Follow{}, &social.Friend{}, &social.Relationship{},
+	)
+}
+
+services/user-service/internal/interest/handler.go
+package interest
+
+import (
+	"net/http"
+	"strconv"
+
+	"users-service/internal/shared/httpx"
 	"users-service/internal/shared/validate"
 )
 
@@ -1177,211 +1236,165 @@ type Handler struct{ svc Service }
 
 func NewHandler(s Service) *Handler { return &Handler{svc: s} }
 
-func (h *Handler) Register(w http.ResponseWriter, r *http.Request) error {
-	body, err := httpx.Decode[RegisterReq](r)
+type CreateReq struct {
+	Name string `json:"name" validate:"required"`
+}
+
+func (h *Handler) Create(w http.ResponseWriter, r *http.Request) error {
+	_, shardID, err := httpx.UserFromCtx(r)
 	if err != nil {
 		return err
 	}
-	if err = validate.Struct(body); err != nil {
-		return err
-	}
-	u, err := h.svc.Register(body.Email, body.Password, body.Name)
+	in, err := httpx.Decode[CreateReq](r)
 	if err != nil {
 		return err
 	}
-	token, _ := jwt.Make(u.UserID, u.ShardID)
-	httpx.WriteJSON(w, map[string]any{
-		"user_id": u.UserID, "name": u.Name, "email": u.Email, "access_token": token,
-	}, http.StatusCreated)
+	if err := validate.Struct(in); err != nil {
+		return err
+	}
+	it, err := h.svc.Create(shardID, in.Name)
+	if err != nil {
+		return err
+	}
+	httpx.WriteJSON(w, map[string]any{"id": it.ID, "name": it.Name}, http.StatusCreated)
 	return nil
 }
 
-func (h *Handler) Login(w http.ResponseWriter, r *http.Request) error {
-	body, err := httpx.Decode[LoginReq](r)
+func (h *Handler) Attach(w http.ResponseWriter, r *http.Request) error {
+	uid, _, err := httpx.UserFromCtx(r)
 	if err != nil {
 		return err
 	}
-	if err = validate.Struct(body); err != nil {
+	id, _ := strconv.ParseUint(r.PathValue("interest_id"), 10, 64)
+	if id == 0 {
+		return httpx.ErrUnauthorized
+	}
+	if err := h.svc.Attach(uid, id); err != nil {
 		return err
 	}
-	u, err := h.svc.Login(body.Email, body.Password)
-	if err != nil {
-		return err
-	}
-	token, _ := jwt.Make(u.UserID, u.ShardID)
-	httpx.WriteJSON(w, map[string]any{
-		"message": "login successful", "user_id": u.UserID, "name": u.Name, "email": u.Email, "access_token": token,
-	}, http.StatusOK)
+	httpx.WriteJSON(w, map[string]string{"status": "ok"}, http.StatusOK)
 	return nil
 }
 
-func (h *Handler) GetByID(w http.ResponseWriter, r *http.Request) error {
-	uid := r.PathValue("user_id")
-	u, err := h.svc.GetByUserID(uid)
+func (h *Handler) Detach(w http.ResponseWriter, r *http.Request) error {
+	uid, _, err := httpx.UserFromCtx(r)
 	if err != nil {
 		return err
 	}
-	httpx.WriteJSON(w, u, http.StatusOK)
+	id, _ := strconv.ParseUint(r.PathValue("interest_id"), 10, 64)
+	if id == 0 {
+		return httpx.ErrUnauthorized
+	}
+	if err := h.svc.Detach(uid, id); err != nil {
+		return err
+	}
+	httpx.WriteJSON(w, map[string]string{"status": "ok"}, http.StatusOK)
 	return nil
 }
 
 func (h *Handler) ListMine(w http.ResponseWriter, r *http.Request) error {
-	_, shardID, err := httpx.UserFromCtx(r)
+	uid, _, err := httpx.UserFromCtx(r)
 	if err != nil {
 		return err
 	}
 	limit := httpx.QueryInt(r, "limit", 50)
 	offset := httpx.QueryInt(r, "offset", 0)
-	users, err := h.svc.ListMine(shardID, limit, offset)
+	items, err := h.svc.List(uid, limit, offset)
 	if err != nil {
 		return err
 	}
-	httpx.WriteJSON(w, map[string]any{"shard_id": shardID, "limit": limit, "offset": offset, "items": users}, http.StatusOK)
+	httpx.WriteJSON(w, map[string]any{"items": items, "limit": limit, "offset": offset}, http.StatusOK)
 	return nil
 }
 
-services/user-service/internal/user/repository.go
-package user
+services/user-service/internal/interest/interest.go
+package interest
+
+type City struct {
+	ID   uint64 `gorm:"primaryKey" json:"id"`
+	Name string `gorm:"uniqueIndex;size:120" json:"name"`
+}
+type Interest struct {
+	ID   uint64 `gorm:"primaryKey" json:"id"`
+	Name string `gorm:"uniqueIndex;size:120" json:"name"`
+}
+type InterestUser struct {
+	UserID     string `gorm:"primaryKey;size:64"`
+	InterestID uint64 `gorm:"primaryKey"`
+}
+
+
+services/user-service/internal/interest/repository.go
+package interest
 
 import (
-	"errors"
 	"users-service/internal/shared/db"
 	"users-service/internal/shared/shard"
+
+	"gorm.io/gorm"
 )
 
 type Repository interface {
-	Create(u *User) (*User, error)
-	GetByEmail(email string, shardID int) (*User, error)
-	GetByUserID(uid string) (*User, error)
-	ListByShard(shardID, limit, offset int) ([]User, error)
+	// NEW:
+	Create(shardID int, name string) (*Interest, error)
+
+	Attach(uid string, interestID uint64) error
+	Detach(uid string, interestID uint64) error
+	List(uid string, limit, offset int) ([]Interest, error)
 }
 
 type repo struct{ store *db.Store }
 
 func NewRepository(s *db.Store) Repository { return &repo{store: s} }
 
-func (r *repo) Create(u *User) (*User, error) {
-	if err := r.store.Write(u.ShardID).Create(u).Error; err != nil {
+func (r *repo) Create(shardID int, name string) (*Interest, error) {
+	in := &Interest{Name: name}
+	if err := r.store.Write(shardID).FirstOrCreate(in, "name = ?", name).Error; err != nil {
 		return nil, err
 	}
-	return u, nil
-}
-func (r *repo) GetByEmail(email string, shardID int) (*User, error) {
-	var u User
-	err := r.store.Use(shardID).Where("email = ?", email).First(&u).Error
-	if err != nil {
-		return nil, err
-	}
-	return &u, nil
-}
-func (r *repo) GetByUserID(uid string) (*User, error) {
-	sh, ok := shard.Extract(uid)
-	if !ok {
-		return nil, errors.New("bad user_id")
-	}
-	var u User
-	if err := r.store.Use(sh).Where("user_id = ?", uid).First(&u).Error; err != nil {
-		return nil, err
-	}
-	return &u, nil
-}
-func (r *repo) ListByShard(shardID, limit, offset int) ([]User, error) {
-	var out []User
-	err := r.store.Use(shardID).Order("created_at DESC").Limit(limit).Offset(offset).Find(&out).Error
-	return out, err
+	return in, nil
 }
 
-services/user-service/internal/user/service.go
-package user
+func (r *repo) Attach(uid string, interestID uint64) error {
+	sh, _ := shard.Extract(uid)
+	return r.store.Write(sh).FirstOrCreate(&InterestUser{UserID: uid, InterestID: interestID}).Error
+}
+func (r *repo) Detach(uid string, interestID uint64) error {
+	sh, _ := shard.Extract(uid)
+	return r.store.Write(sh).Delete(&InterestUser{}, "user_id=? AND interest_id=?", uid, interestID).Error
+}
+func (r *repo) List(uid string, limit, offset int) ([]Interest, error) {
+	sh, _ := shard.Extract(uid)
+	var ints []Interest
+	err := r.store.Use(sh).
+		Joins("JOIN interest_users iu ON iu.interest_id = interests.id AND iu.user_id = ?", uid).
+		Model(&Interest{}).Limit(limit).Offset(offset).Find(&ints).Error
+	return ints, err
+}
 
-import (
-	"crypto/rand"
-	"encoding/binary"
-	"errors"
-	"fmt"
-	"os"
-	"strconv"
+var _ = gorm.ErrRecordNotFound
 
-	"users-service/internal/shared/shard"
 
-	"golang.org/x/crypto/bcrypt"
-)
+services/user-service/internal/interest/service.go
+package interest
 
 type Service interface {
-	Register(email, password, name string) (*User, error)
-	Login(email, password string) (*User, error)
-	GetByUserID(uid string) (*User, error)
-	ListMine(shardID, limit, offset int) ([]User, error)
-}
-type service struct {
-	repo      Repository
-	numShards int
+	Create(shardID int, name string) (*Interest, error)
+
+	Attach(uid string, interestID uint64) error
+	Detach(uid string, interestID uint64) error
+	List(uid string, limit, offset int) ([]Interest, error)
 }
 
-func NewService(r Repository) Service {
-	n := 1
-	if s := os.Getenv("NUM_SHARDS"); s != "" {
-		if v, e := strconv.Atoi(s); e == nil && v > 0 {
-			n = v
-		}
-	}
-	return &service{repo: r, numShards: n}
-}
+type service struct{ repo Repository }
 
-func (s *service) Register(email, password, name string) (*User, error) {
-	sh := shard.Pick(email, s.numShards)
-	if exist, _ := s.repo.GetByEmail(email, sh); exist != nil {
-		return nil, errors.New("user exists")
-	}
-	var b [8]byte
-	_, _ = rand.Read(b[:])
-	uid := fmt.Sprintf("%d-%x", sh, binary.BigEndian.Uint64(b[:]))
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	if err != nil {
-		return nil, errors.New("hash fail")
-	}
-	return s.repo.Create(&User{
-		UserID: uid, ShardID: sh, Email: email, PassHash: string(hash), Name: name,
-	})
-}
-func (s *service) Login(email, password string) (*User, error) {
-	sh := shard.Pick(email, s.numShards)
-	u, err := s.repo.GetByEmail(email, sh)
-	if err != nil {
-		return nil, errors.New("wrong credentials")
-	}
-	if bcrypt.CompareHashAndPassword([]byte(u.PassHash), []byte(password)) != nil {
-		return nil, errors.New("wrong credentials")
-	}
-	return u, nil
-}
-func (s *service) GetByUserID(uid string) (*User, error) { return s.repo.GetByUserID(uid) }
-func (s *service) ListMine(shardID, limit, offset int) ([]User, error) {
-	return s.repo.ListByShard(shardID, limit, offset)
-}
+func NewService(r Repository) Service { return &service{repo: r} }
 
-services/user-service/internal/user/user.go
-package user
-
-import "time"
-
-type User struct {
-	UserID    string    `gorm:"uniqueIndex;size:64" json:"user_id"`
-	ShardID   int       `gorm:"index" json:"shard_id"`
-	ID        uint      `gorm:"primaryKey" json:"-"`
-	Email     string    `gorm:"uniqueIndex;size:120" json:"email"`
-	PassHash  string    `gorm:"size:255" json:"-"`
-	Name      string    `gorm:"size:100" json:"name"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+func (s *service) Create(shardID int, name string) (*Interest, error) {
+	return s.repo.Create(shardID, name)
 }
-
-type RegisterReq struct {
-	Email    string `json:"email" validate:"required,email"`
-	Password string `json:"password" validate:"required,min=6"`
-	Name     string `json:"name" validate:"required"`
-}
-type LoginReq struct {
-	Email    string `json:"email" validate:"required,email"`
-	Password string `json:"password" validate:"required"`
+func (s *service) Attach(uid string, interestID uint64) error { return s.repo.Attach(uid, interestID) }
+func (s *service) Detach(uid string, interestID uint64) error { return s.repo.Detach(uid, interestID) }
+func (s *service) List(uid string, limit, offset int) ([]Interest, error) {
+	return s.repo.List(uid, limit, offset)
 }
