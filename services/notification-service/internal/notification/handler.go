@@ -2,9 +2,10 @@ package notification
 
 import (
 	"encoding/json"
-	"message-service/internal/shared/httpx"
 	"net/http"
 	"strconv"
+
+	"notification-service/internal/shared/httpx"
 )
 
 type Handler struct{ svc Service }
