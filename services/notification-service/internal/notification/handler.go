@@ -13,18 +13,17 @@ type Handler struct{ svc Service }
 func NewHandler(s Service) *Handler { return &Handler{svc: s} }
 
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) error {
-	userID := r.PathValue("user_id")
-	if userID == "" {
-		if uid, err := httpx.UserFromCtx(r); err == nil {
-			userID = uid
-		}
+	uid, err := httpx.UserFromCtx(r)
+	if err != nil {
+		return errUnauthorized("auth required")
 	}
-	if userID == "" {
-		return errBadReq("missing user_id")
+
+	if pathUID := r.PathValue("user_id"); pathUID != "" && pathUID != uid {
+		return errUnauthorized("forbidden: cannot read other users' notifications")
 	}
 
 	limit, _ := strconv.ParseInt(r.URL.Query().Get("limit"), 10, 64)
-	items, err := h.svc.List(r.Context(), userID, limit)
+	items, err := h.svc.List(r.Context(), uid, limit)
 	if err != nil {
 		return err
 	}

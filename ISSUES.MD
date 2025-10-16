@@ -45,3 +45,11 @@ Fix:
 In post/handler.UploadAndCreate, extract bearer (add httpx.BearerToken helper like in other services) and pass it into svc.UploadAndCreate.
 
 Thread the bearer to uploadToMediaService and set Authorization: Bearer <token>.
+
+5. Notification read API is public by path
+
+GET /users/{user_id}/notifications is public (no auth), falling back to auth only if path param missing.
+
+Impact: Anyone can fetch someone else’s notifications by user_id.
+
+Fix: Require auth and ensure {user_id} equals sub from JWT (or drop the path variant and only serve /notifications).

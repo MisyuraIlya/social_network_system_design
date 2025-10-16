@@ -163,14 +163,11 @@ func main() {
 		_, _ = w.Write([]byte("ok"))
 	})
 
-	// Public (optional user_id in path; falls back to auth if missing)
-	mux.Handle("GET /users/{user_id}/notifications", httpx.Wrap(h.List))
-
-	// Protected
 	protect := func(pattern string, handler http.Handler) {
 		mux.Handle(pattern, httpx.AuthMiddleware(handler))
 	}
 	protect("GET /notifications", httpx.Wrap(h.List))
+	protect("GET /users/{user_id}/notifications", httpx.Wrap(h.List))
 	protect("POST /notifications/{id}/read", httpx.Wrap(h.MarkRead))
 	protect("POST /notifications/test", httpx.Wrap(h.CreateTest))
 
