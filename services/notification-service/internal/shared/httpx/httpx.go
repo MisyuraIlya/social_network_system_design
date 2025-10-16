@@ -2,15 +2,12 @@ package httpx
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
-	"os"
 	"strings"
-	"time"
+
+	"notification-service/internal/shared/jwt"
 )
 
 type HandlerFunc func(http.ResponseWriter, *http.Request) error
@@ -33,21 +30,25 @@ type ctxKey string
 
 const userKey ctxKey = "user_id"
 
+var ErrNoUser = errors.New("no user in context")
+
+func BearerToken(r *http.Request) string {
+	h := r.Header.Get("Authorization")
+	if strings.HasPrefix(h, "Bearer ") {
+		return strings.TrimSpace(h[7:])
+	}
+	return ""
+}
+
 func AuthMiddleware(next http.Handler) http.Handler {
-	secret := os.Getenv("JWT_SECRET")
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if secret == "" {
-			next.ServeHTTP(w, r)
-			return
-		}
-		auth := r.Header.Get("Authorization")
-		if !strings.HasPrefix(auth, "Bearer ") {
+		tok := BearerToken(r)
+		if tok == "" {
 			WriteJSON(w, map[string]string{"error": "missing token"}, http.StatusUnauthorized)
 			return
 		}
-		token := strings.TrimPrefix(auth, "Bearer ")
-		uid, err := verifyToken(token, secret)
-		if err != nil {
+		uid, err := jwt.Parse(tok)
+		if err != nil || uid == "" {
 			WriteJSON(w, map[string]string{"error": "invalid token"}, http.StatusUnauthorized)
 			return
 		}
@@ -59,36 +60,7 @@ func AuthMiddleware(next http.Handler) http.Handler {
 func UserFromCtx(r *http.Request) (string, error) {
 	uid, _ := r.Context().Value(userKey).(string)
 	if uid == "" {
-		return "", errors.New("no user in context")
+		return "", ErrNoUser
 	}
 	return uid, nil
 }
-
-func verifyToken(token, secret string) (string, error) {
-	parts := strings.Split(token, ".")
-	if len(parts) != 2 {
-		return "", errors.New("bad token")
-	}
-	raw, sig := parts[0], parts[1]
-	sum := hmac.New(sha256.New, []byte(secret))
-	sum.Write([]byte(raw))
-	expected := base64.RawURLEncoding.EncodeToString(sum.Sum(nil))
-	if !hmac.Equal([]byte(sig), []byte(expected)) {
-		return "", errors.New("bad sig")
-	}
-	b, err := base64.RawURLEncoding.DecodeString(raw)
-	if err != nil {
-		return "", err
-	}
-	return string(b), nil
-}
-
-func MintToken(userID, secret string) string {
-	raw := base64.RawURLEncoding.EncodeToString([]byte(userID))
-	sum := hmac.New(sha256.New, []byte(secret))
-	sum.Write([]byte(raw))
-	sig := base64.RawURLEncoding.EncodeToString(sum.Sum(nil))
-	return raw + "." + sig
-}
-
-func NowUTC() time.Time { return time.Now().UTC() }
