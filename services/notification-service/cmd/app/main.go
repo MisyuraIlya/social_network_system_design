@@ -5,8 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
-	"message-service/internal/config"
 	"net/http"
+	"strconv"
+
 	"os"
 	"os/signal"
 	"strings"
@@ -27,7 +28,7 @@ import (
 )
 
 func initOTEL(ctx context.Context) func(context.Context) error {
-	endpoint := config.GetEnv("OTEL_EXPORTER_OTLP_ENDPOINT", "otel-collector:4318")
+	endpoint := envOr("OTEL_EXPORTER_OTLP_ENDPOINT", "otel-collector:4318")
 	exp, err := otlptracehttp.New(
 		ctx,
 		otlptracehttp.WithEndpoint(endpoint),
@@ -37,8 +38,8 @@ func initOTEL(ctx context.Context) func(context.Context) error {
 		log.Fatalf("otel exporter: %v", err)
 	}
 
-	svcName := config.GetEnv("OTEL_SERVICE_NAME", "notification-service")
-	env := config.GetEnv("ENV", "local")
+	svcName := envOr("OTEL_SERVICE_NAME", "notification-service")
+	env := envOr("ENV", "local")
 
 	res, _ := resource.Merge(
 		resource.Default(),
@@ -51,7 +52,7 @@ func initOTEL(ctx context.Context) func(context.Context) error {
 
 	ratio := 1.0
 	if s := os.Getenv("OTEL_TRACES_SAMPLER_ARG"); s != "" {
-		if f, e := strconvParseFloatSafe(s); e == nil && f >= 0 && f <= 1 {
+		if f, e := strconv.ParseFloat(s, 64); e == nil && f >= 0 && f <= 1 {
 			ratio = f
 		}
 	}
@@ -69,26 +70,17 @@ func initOTEL(ctx context.Context) func(context.Context) error {
 	return tp.Shutdown
 }
 
-func strconvParseFloatSafe(s string) (float64, error) {
-	var f float64
-	_, err := fmtSscanf(s, "%f", &f)
-	return f, err
-}
-
-func fmtSscanf(str, format string, a ...any) (int, error) {
-	return 0, errors.New("fmt sscanf proxy not implemented")
-}
-
 type MessageEvent struct {
 	MessageID int64     `json:"message_id"`
 	ChatID    int64     `json:"chat_id"`
-	SenderID  int64     `json:"sender_id"`
+	UserID    string    `json:"user_id"`
 	Text      string    `json:"text"`
-	SentAt    time.Time `json:"sent_at"`
+	MediaURL  string    `json:"media_url"`
+	SendTime  time.Time `json:"send_time"`
 }
 
 func notify(ctx context.Context, ev MessageEvent) error {
-	log.Printf("[notify] chat=%d sender=%d msg=%d text=%q", ev.ChatID, ev.SenderID, ev.MessageID, ev.Text)
+	log.Printf("[notify] chat=%d sender=%s msg=%d text=%q", ev.ChatID, ev.UserID, ev.MessageID, ev.Text)
 	return nil
 }
 
@@ -169,10 +161,10 @@ func main() {
 		_ = shutdown(c)
 	}()
 
-	addr := config.GetEnv("APP_PORT", ":8086")
-	brokers := config.GetEnv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
-	groupID := config.GetEnv("KAFKA_GROUP_ID", "notification-service")
-	topic := config.GetEnv("KAFKA_TOPIC_NOTIFICATIONS", "messages.new")
+	addr := envOr("APP_PORT", ":8086")
+	brokers := envOr("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
+	groupID := envOr("KAFKA_GROUP_ID", "notification-service")
+	topic := envOr("KAFKA_TOPIC_NOTIFICATIONS", "messages.created")
 
 	cons := newConsumer(brokers, groupID, topic)
 	defer func() { _ = cons.Close() }()
@@ -202,4 +194,11 @@ func main() {
 	defer shCancel()
 	_ = srv.Shutdown(shCtx)
 	cancel()
+}
+
+func envOr(k, def string) string {
+	if v := os.Getenv(k); v != "" {
+		return v
+	}
+	return def
 }

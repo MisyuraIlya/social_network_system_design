@@ -17,7 +17,7 @@ func New(base string) *Client {
 	return &Client{base: base}
 }
 
-func (c *Client) Upload(fieldName, fileName string, r io.Reader) (string, error) {
+func (c *Client) Upload(fieldName, fileName string, r io.Reader, bearer string) (string, error) {
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
 	fw, _ := w.CreateFormFile(fieldName, fileName)
@@ -26,6 +26,9 @@ func (c *Client) Upload(fieldName, fileName string, r io.Reader) (string, error)
 
 	req, _ := http.NewRequest("POST", c.base+"/media/upload", &buf)
 	req.Header.Set("Content-Type", w.FormDataContentType())
+	if bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return "", err

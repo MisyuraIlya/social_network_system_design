@@ -107,6 +107,7 @@ func main() {
 	mux.Handle("GET /posts/{post_id}/likes", httpx.Wrap(lh.GetLikes))
 
 	ch := comment.NewHandler(commentSvc)
+	ch.WithLikeService(likeSvc)
 	mux.Handle("GET /posts/{post_id}/comments", httpx.Wrap(ch.ListByPost))
 	mux.Handle("GET /posts/{post_id}/counts", httpx.Wrap(ch.GetCounts))
 

@@ -74,7 +74,7 @@ func (h *Handler) Join(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (h *Handler) AddUser(w http.ResponseWriter, r *http.Request) error {
-	_, err := httpx.UserFromCtx(r)
+	actorID, err := httpx.UserFromCtx(r)
 	if err != nil {
 		return err
 	}
@@ -83,7 +83,7 @@ func (h *Handler) AddUser(w http.ResponseWriter, r *http.Request) error {
 	if cid == 0 || uid == "" {
 		return httpx.ErrUnauthorized
 	}
-	if err := h.svc.AddUser(cid, uid); err != nil {
+	if err := h.svc.AddUser(cid, actorID, uid); err != nil {
 		return err
 	}
 	httpx.WriteJSON(w, ok(), http.StatusOK)

@@ -61,12 +61,12 @@ func (s *service) Create(uid string, in CreateReq) (*Post, error) {
 		}
 	}
 	_ = s.kafka.WriteJSON(context.Background(), map[string]any{
-		"type": "post.created",
-		"ts":   time.Now().Unix(),
-		"post": map[string]any{
-			"id": out.ID, "user_id": out.UserID, "description": out.Description, "media": out.MediaURL,
-		},
-		"tags": in.Tags,
+		"id":          out.ID,
+		"user_id":     out.UserID,
+		"description": out.Description,
+		"media_url":   out.MediaURL,
+		"tags":        in.Tags,
+		"created_at":  out.CreatedAt,
 	})
 	return out, nil
 }
@@ -103,7 +103,7 @@ func uploadToMediaService(filename string, r io.Reader) (string, error) {
 	}
 	_ = w.Close()
 
-	req, _ := http.NewRequest("POST", fmt.Sprintf("%s/upload", base), &body)
+	req, _ := http.NewRequest("POST", fmt.Sprintf("%s/media/upload", base), &body)
 	req.Header.Set("Content-Type", w.FormDataContentType())
 
 	resp, err := http.DefaultClient.Do(req)

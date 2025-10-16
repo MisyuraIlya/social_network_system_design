@@ -2,13 +2,14 @@ package chat
 
 import (
 	"context"
+	"fmt"
 	"message-service/internal/redisx"
 )
 
 type Service interface {
 	Create(owner string, in CreateReq) (*Chat, error)
 	GetByID(chatID int64) (*Chat, error)
-	AddUser(chatID int64, userID string) error
+	AddUser(chatID int64, actorID string, userID string) error
 	Join(chatID int64, userID string) error
 	Leave(chatID int64, userID string) error
 	ListMine(userID string, limit, offset int) ([]Chat, error)
@@ -28,8 +29,18 @@ func NewService(r Repository, rds *redisx.Client) Service {
 func (s *service) Create(owner string, in CreateReq) (*Chat, error) {
 	return s.repo.Create(owner, in.Name, in.Members)
 }
-func (s *service) GetByID(chatID int64) (*Chat, error) { return s.repo.GetByID(chatID) }
-func (s *service) AddUser(chatID int64, userID string) error {
+func (s *service) GetByID(chatID int64) (*Chat, error) {
+	return s.repo.GetByID(chatID)
+}
+
+func (s *service) AddUser(chatID int64, actorID string, userID string) error {
+	chat, err := s.repo.GetByID(chatID)
+	if err != nil {
+		return err
+	}
+	if chat.OwnerID != actorID {
+		return fmt.Errorf("forbidden: only owner can add users")
+	}
 	return s.repo.AddUser(chatID, userID, "member")
 }
 func (s *service) Join(chatID int64, userID string) error {

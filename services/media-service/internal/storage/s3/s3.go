@@ -1,6 +1,7 @@
 package s3
 
 import (
+	"bytes"
 	"context"
 	"net/url"
 	"strings"
@@ -47,7 +48,7 @@ func (s *Storage) EnsureBucket(ctx context.Context) error {
 
 func (s *Storage) Put(ctx context.Context, key string, contentType string, data []byte) error {
 	_, err := s.client.PutObject(ctx, s.cfg.Bucket, key,
-		strings.NewReader(string(data)), int64(len(data)),
+		bytes.NewReader(data), int64(len(data)),
 		minio.PutObjectOptions{ContentType: contentType})
 	return err
 }

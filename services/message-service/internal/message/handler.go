@@ -49,7 +49,8 @@ func (h *Handler) UploadAndSend(w http.ResponseWriter, r *http.Request) error {
 	data, _ := io.ReadAll(f)
 	chatID, _ := strconv.ParseInt(r.FormValue("chat_id"), 10, 64)
 	text := r.FormValue("text")
-	m, err := h.svc.SendWithUpload(r.Context(), uid, chatID, fh.Filename, data, text)
+	bearer := httpx.BearerToken(r)
+	m, err := h.svc.SendWithUpload(r.Context(), uid, chatID, fh.Filename, data, text, bearer)
 	if err != nil {
 		return err
 	}

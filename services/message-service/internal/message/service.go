@@ -14,7 +14,7 @@ import (
 
 type Service interface {
 	Send(ctx context.Context, userID string, in SendReq) (*Message, error)
-	SendWithUpload(ctx context.Context, userID string, chatID int64, fileName string, fileData []byte, text string) (*Message, error)
+	SendWithUpload(ctx context.Context, userID string, chatID int64, fileName string, fileData []byte, text string, bearer string) (*Message, error)
 	MarkSeen(messageID int64, userID string) error
 	ListByChat(chatID int64, limit, offset int) ([]Message, error)
 }
@@ -53,8 +53,8 @@ func (s *service) Send(ctx context.Context, userID string, in SendReq) (*Message
 	return res, nil
 }
 
-func (s *service) SendWithUpload(ctx context.Context, userID string, chatID int64, fileName string, data []byte, text string) (*Message, error) {
-	url, err := s.media.Upload("file", fileName, bytesReader(data))
+func (s *service) SendWithUpload(ctx context.Context, userID string, chatID int64, fileName string, data []byte, text string, bearer string) (*Message, error) {
+	url, err := s.media.Upload("file", fileName, bytesReader(data), bearer)
 	if err != nil {
 		return nil, err
 	}
