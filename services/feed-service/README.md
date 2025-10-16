@@ -1,6 +1,6 @@
 # Project code dump
 
-- Generated: 2025-10-16 15:32:53+0300
+- Generated: 2025-10-16 16:14:09+0300
 - Root: `/home/ilya/projects/social_network_system_design/services/feed-service`
 
 cmd/app/main.go
@@ -115,6 +115,8 @@ func main() {
 
 	// Public:
 	mux.Handle("GET /users/{user_id}/feed", httpx.Wrap(h.GetAuthorFeed))
+	mux.Handle("GET /celebrities/{user_id}/feed", httpx.Wrap(h.GetCelebrityFeed))
+	mux.Handle("GET /celebrities", httpx.Wrap(h.ListCelebrities))
 
 	// Protected:
 	protect := func(pattern string, handler http.Handler) {
@@ -122,6 +124,11 @@ func main() {
 	}
 	protect("GET /feed", httpx.Wrap(h.GetHomeFeed))
 	protect("POST /feed/rebuild", httpx.Wrap(h.RebuildHomeFeed))
+
+	// Manage celebrity set (keep behind auth; later you can gate with roles/claims)
+	protect("POST /celebrities/{user_id}", httpx.Wrap(h.PromoteCelebrity))
+	protect("DELETE /celebrities/{user_id}", httpx.Wrap(h.DemoteCelebrity))
+
 	protect("GET /whoami", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		uid, err := httpx.UserFromCtx(r)
 		if err != nil {
@@ -159,6 +166,7 @@ type Handler struct{ svc Service }
 
 func NewHandler(s Service) *Handler { return &Handler{svc: s} }
 
+// Public: feed by author
 func (h *Handler) GetAuthorFeed(w http.ResponseWriter, r *http.Request) error {
 	uid := r.PathValue("user_id")
 	limit := httpx.QueryInt(r, "limit", 50)
@@ -171,6 +179,7 @@ func (h *Handler) GetAuthorFeed(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
+// Protected: home feed of the current user
 func (h *Handler) GetHomeFeed(w http.ResponseWriter, r *http.Request) error {
 	uid, err := httpx.UserFromCtx(r)
 	if err != nil {
@@ -200,6 +209,65 @@ func (h *Handler) RebuildHomeFeed(w http.ResponseWriter, r *http.Request) error 
 	return nil
 }
 
+// ---------- Celebrities ----------
+
+// Public: feed by celebrity user_id
+func (h *Handler) GetCelebrityFeed(w http.ResponseWriter, r *http.Request) error {
+	uid := r.PathValue("user_id")
+	limit := httpx.QueryInt(r, "limit", 50)
+	offset := httpx.QueryInt(r, "offset", 0)
+	items, err := h.svc.GetCelebrityFeed(r.Context(), uid, limit, offset)
+	if err != nil {
+		return err
+	}
+	httpx.WriteJSON(w, map[string]any{"items": items, "limit": limit, "offset": offset}, http.StatusOK)
+	return nil
+}
+
+// Public: list celebrity IDs (could be cached by clients)
+func (h *Handler) ListCelebrities(w http.ResponseWriter, r *http.Request) error {
+	ids, err := h.svc.ListCelebrities(r.Context())
+	if err != nil {
+		return err
+	}
+	httpx.WriteJSON(w, map[string]any{"items": ids}, http.StatusOK)
+	return nil
+}
+
+// Protected: promote a user to celebrity set
+func (h *Handler) PromoteCelebrity(w http.ResponseWriter, r *http.Request) error {
+	_, err := httpx.UserFromCtx(r) // simple auth gate; tighten to admin if you add roles later
+	if err != nil {
+		return err
+	}
+	uid := r.PathValue("user_id")
+	if uid == "" {
+		return httpx.ErrUnauthorized
+	}
+	if err := h.svc.PromoteCelebrity(r.Context(), uid); err != nil {
+		return err
+	}
+	httpx.WriteJSON(w, map[string]string{"status": "ok"}, http.StatusOK)
+	return nil
+}
+
+// Protected: demote a user from celebrity set
+func (h *Handler) DemoteCelebrity(w http.ResponseWriter, r *http.Request) error {
+	_, err := httpx.UserFromCtx(r)
+	if err != nil {
+		return err
+	}
+	uid := r.PathValue("user_id")
+	if uid == "" {
+		return httpx.ErrUnauthorized
+	}
+	if err := h.svc.DemoteCelebrity(r.Context(), uid); err != nil {
+		return err
+	}
+	httpx.WriteJSON(w, map[string]string{"status": "ok"}, http.StatusOK)
+	return nil
+}
+
 internal/feed/repository.go
 package feed
 
@@ -218,6 +286,9 @@ const (
 	keyUsersFeedFmt   = "users_feed:%s"
 	keyCelebFeedFmt   = "celebrities_feed:%s"
 
+	// set storing celebrity user IDs
+	keyCelebSet = "celebrities:set"
+
 	maxPerAuthor = 500
 	maxHomeSize  = 1000
 )
@@ -227,6 +298,13 @@ type Repository interface {
 	GetAuthorFeed(ctx context.Context, authorID string, limit, offset int) ([]FeedEntry, error)
 	StoreHomeFeed(ctx context.Context, userID string, entries []FeedEntry) error
 	GetHomeFeed(ctx context.Context, userID string, limit, offset int) ([]FeedEntry, error)
+
+	// Celebrities
+	AddCelebrity(ctx context.Context, userID string) error
+	RemoveCelebrity(ctx context.Context, userID string) error
+	IsCelebrity(ctx context.Context, userID string) (bool, error)
+	ListCelebrities(ctx context.Context) ([]string, error)
+	GetCelebrityFeed(ctx context.Context, userID string, limit, offset int) ([]FeedEntry, error)
 }
 
 type repo struct {
@@ -235,8 +313,9 @@ type repo struct {
 
 func NewRepository(rdb *redis.Client) Repository { return &repo{rdb: rdb} }
 
-func (r *repo) authorKey(uid string) string   { return fmt.Sprintf(keyAuthorPostsFmt, uid) }
-func (r *repo) userFeedKey(uid string) string { return fmt.Sprintf(keyUsersFeedFmt, uid) }
+func (r *repo) authorKey(uid string) string    { return fmt.Sprintf(keyAuthorPostsFmt, uid) }
+func (r *repo) userFeedKey(uid string) string  { return fmt.Sprintf(keyUsersFeedFmt, uid) }
+func (r *repo) celebFeedKey(uid string) string { return fmt.Sprintf(keyCelebFeedFmt, uid) }
 
 func (r *repo) HandlePostEvent(ctx context.Context, ev PostEvent) error {
 	entry := FeedEntry{
@@ -249,11 +328,23 @@ func (r *repo) HandlePostEvent(ctx context.Context, ev PostEvent) error {
 		Score:     float64(ev.CreatedAt.Unix()),
 	}
 	b, _ := json.Marshal(entry)
+
 	pipe := r.rdb.TxPipeline()
+	// Always append to author feed
 	pipe.LPush(ctx, r.authorKey(ev.UserID), b)
 	pipe.LTrim(ctx, r.authorKey(ev.UserID), 0, maxPerAuthor-1)
-	_, err := pipe.Exec(ctx)
-	return err
+
+	// If author is a celebrity, append to celebrity feed as well
+	isCeleb, err := r.IsCelebrity(ctx, ev.UserID)
+	if err == nil && isCeleb {
+		pipe.LPush(ctx, r.celebFeedKey(ev.UserID), b)
+		pipe.LTrim(ctx, r.celebFeedKey(ev.UserID), 0, maxPerAuthor-1)
+	}
+	_, execErr := pipe.Exec(ctx)
+	if execErr != nil {
+		return execErr
+	}
+	return nil
 }
 
 func (r *repo) GetAuthorFeed(ctx context.Context, authorID string, limit, offset int) ([]FeedEntry, error) {
@@ -304,6 +395,40 @@ func (r *repo) GetHomeFeed(ctx context.Context, userID string, limit, offset int
 	return out, nil
 }
 
+// ---- Celebrities ----
+
+func (r *repo) AddCelebrity(ctx context.Context, userID string) error {
+	return r.rdb.SAdd(ctx, keyCelebSet, userID).Err()
+}
+
+func (r *repo) RemoveCelebrity(ctx context.Context, userID string) error {
+	return r.rdb.SRem(ctx, keyCelebSet, userID).Err()
+}
+
+func (r *repo) IsCelebrity(ctx context.Context, userID string) (bool, error) {
+	n, err := r.rdb.SIsMember(ctx, keyCelebSet, userID).Result()
+	return n, err
+}
+
+func (r *repo) ListCelebrities(ctx context.Context) ([]string, error) {
+	return r.rdb.SMembers(ctx, keyCelebSet).Result()
+}
+
+func (r *repo) GetCelebrityFeed(ctx context.Context, userID string, limit, offset int) ([]FeedEntry, error) {
+	raws, err := r.rdb.LRange(ctx, r.celebFeedKey(userID), int64(offset), int64(offset+limit-1)).Result()
+	if err != nil && err != redis.Nil {
+		return nil, err
+	}
+	out := make([]FeedEntry, 0, len(raws))
+	for _, s := range raws {
+		var e FeedEntry
+		if json.Unmarshal([]byte(s), &e) == nil {
+			out = append(out, e)
+		}
+	}
+	return out, nil
+}
+
 internal/feed/service.go
 package feed
 
@@ -321,6 +446,12 @@ type Service interface {
 	GetAuthorFeed(ctx context.Context, authorID string, limit, offset int) ([]FeedEntry, error)
 	GetHomeFeed(ctx context.Context, userID string, limit, offset int) ([]FeedEntry, error)
 	RebuildHomeFeed(ctx context.Context, userID, bearer string, limit int) error
+
+	// Celebrities
+	GetCelebrityFeed(ctx context.Context, userID string, limit, offset int) ([]FeedEntry, error)
+	PromoteCelebrity(ctx context.Context, userID string) error
+	DemoteCelebrity(ctx context.Context, userID string) error
+	ListCelebrities(ctx context.Context) ([]string, error)
 }
 
 type service struct {
@@ -414,6 +545,24 @@ func (s *service) RebuildHomeFeed(ctx context.Context, userID, bearer string, li
 		all = all[:limit]
 	}
 	return s.repo.StoreHomeFeed(ctx, userID, all)
+}
+
+// ---- Celebrities ----
+
+func (s *service) GetCelebrityFeed(ctx context.Context, userID string, limit, offset int) ([]FeedEntry, error) {
+	return s.repo.GetCelebrityFeed(ctx, userID, limit, offset)
+}
+
+func (s *service) PromoteCelebrity(ctx context.Context, userID string) error {
+	return s.repo.AddCelebrity(ctx, userID)
+}
+
+func (s *service) DemoteCelebrity(ctx context.Context, userID string) error {
+	return s.repo.RemoveCelebrity(ctx, userID)
+}
+
+func (s *service) ListCelebrities(ctx context.Context) ([]string, error) {
+	return s.repo.ListCelebrities(ctx)
 }
 
 internal/feed/types.go

@@ -1,6 +1,6 @@
 # Project code dump
 
-- Generated: 2025-10-16 15:32:54+0300
+- Generated: 2025-10-16 16:14:10+0300
 - Root: `/home/ilya/projects/social_network_system_design/services/notification-service`
 
 cmd/app/main.go
@@ -12,13 +12,16 @@ import (
 	"errors"
 	"log"
 	"net/http"
-	"strconv"
-
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
+
+	"notification-service/internal/notification"
+	"notification-service/internal/shared/httpx"
+	"notification-service/internal/shared/redisx"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/segmentio/kafka-go"
@@ -139,23 +142,6 @@ func (c *consumer) Run(ctx context.Context) error {
 	}
 }
 
-func newHTTPServer(addr string) *http.Server {
-	mux := http.NewServeMux()
-	mux.Handle("/metrics", promhttp.Handler())
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok"))
-	})
-
-	return &http.Server{
-		Addr:              addr,
-		Handler:           otelhttp.NewHandler(mux, "http.server"),
-		ReadHeaderTimeout: 5 * time.Second,
-		WriteTimeout:      30 * time.Second,
-		IdleTimeout:       90 * time.Second,
-	}
-}
-
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -167,16 +153,51 @@ func main() {
 		_ = shutdown(c)
 	}()
 
+	// Dependencies
+	rdb := redisx.OpenFromEnv()
+	defer func() { _ = rdb.Close() }()
+
+	repo := notification.NewRedisRepository(rdb)
+	svc := notification.NewService(repo)
+	h := notification.NewHandler(svc)
+
+	// HTTP Router
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", promhttp.Handler())
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+
+	// Public (optional user_id in path; falls back to auth if missing)
+	mux.Handle("GET /users/{user_id}/notifications", httpx.Wrap(h.List))
+
+	// Protected
+	protect := func(pattern string, handler http.Handler) {
+		mux.Handle(pattern, httpx.AuthMiddleware(handler))
+	}
+	protect("GET /notifications", httpx.Wrap(h.List))
+	protect("POST /notifications/{id}/read", httpx.Wrap(h.MarkRead))
+	protect("POST /notifications/test", httpx.Wrap(h.CreateTest))
+
+	// Server
 	addr := envOr("APP_PORT", ":8086")
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           otelhttp.NewHandler(mux, "http.server"),
+		ReadHeaderTimeout: 5 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       90 * time.Second,
+	}
+
+	// Kafka
 	brokers := envOr("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
 	groupID := envOr("KAFKA_GROUP_ID", "notification-service")
 	topic := envOr("KAFKA_TOPIC_NOTIFICATIONS", "messages.created")
-
 	cons := newConsumer(brokers, groupID, topic)
 	defer func() { _ = cons.Close() }()
 
-	srv := newHTTPServer(addr)
-
+	// Start HTTP
 	go func() {
 		log.Printf("notification-service listening on %s", addr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -184,6 +205,7 @@ func main() {
 		}
 	}()
 
+	// Start Kafka consumer
 	go func() {
 		log.Printf("kafka consuming topic=%s group=%s brokers=%s", topic, groupID, brokers)
 		if err := cons.Run(ctx); err != nil {
@@ -191,6 +213,7 @@ func main() {
 		}
 	}()
 
+	// Graceful shutdown
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	<-stop
@@ -279,9 +302,10 @@ package notification
 
 import (
 	"encoding/json"
-	"message-service/internal/shared/httpx"
 	"net/http"
 	"strconv"
+
+	"notification-service/internal/shared/httpx"
 )
 
 type Handler struct{ svc Service }

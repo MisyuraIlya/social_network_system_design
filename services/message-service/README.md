@@ -1,6 +1,6 @@
 # Project code dump
 
-- Generated: 2025-10-16 15:32:54+0300
+- Generated: 2025-10-16 16:14:09+0300
 - Root: `/home/ilya/projects/social_network_system_design/services/message-service`
 
 cmd/app/main.go
@@ -648,11 +648,21 @@ type SendReq struct {
 	MediaURL string `json:"media_url"`
 }
 
+type MessageSeen struct {
+	MessageID int64     `gorm:"primaryKey;index" json:"message_id"`
+	UserID    string    `gorm:"primaryKey;size:64;index" json:"user_id"`
+	SeenAt    time.Time `json:"seen_at"`
+}
+
 internal/message/repository.go
 package message
 
 import (
+	"time"
+
 	"message-service/internal/shared/db"
+
+	"gorm.io/gorm/clause"
 )
 
 type Repository interface {
@@ -673,8 +683,17 @@ func (r *repo) Create(m *Message) (*Message, error) {
 }
 
 func (r *repo) MarkSeen(messageID int64, userID string) error {
-	return r.store.Base.Model(&Message{}).Where("id=? AND user_id=?", messageID, userID).
-		Update("is_seen", true).Error
+	ms := &MessageSeen{
+		MessageID: messageID,
+		UserID:    userID,
+		SeenAt:    time.Now(),
+	}
+	return r.store.Base.Clauses(
+		clause.OnConflict{
+			Columns:   []clause.Column{{Name: "message_id"}, {Name: "user_id"}},
+			DoNothing: true,
+		},
+	).Create(ms).Error
 }
 
 func (r *repo) ListByChat(chatID int64, limit, offset int) ([]Message, error) {
@@ -790,6 +809,7 @@ func AutoMigrateAll(store *db.Store) error {
 	return store.Base.AutoMigrate(
 		&chat.Chat{}, &chat.ChatUser{},
 		&message.Message{},
+		&message.MessageSeen{},
 	)
 }
 

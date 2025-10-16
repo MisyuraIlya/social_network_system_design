@@ -1,6 +1,6 @@
 # Project code dump
 
-- Generated: 2025-10-16 15:32:54+0300
+- Generated: 2025-10-16 16:14:10+0300
 - Root: `/home/ilya/projects/social_network_system_design/services/post-service`
 
 cmd/app/main.go
@@ -14,7 +14,6 @@ import (
 	"strconv"
 	"time"
 
-	"post-service/internal/comment"
 	"post-service/internal/kafka"
 	"post-service/internal/migrate"
 	"post-service/internal/post"
@@ -102,9 +101,6 @@ func main() {
 	postRepo := post.NewRepository(store)
 	postSvc := post.NewService(postRepo, tagSvc, kWriter)
 
-	commentRepo := comment.NewRepository(store)
-	commentSvc := comment.NewService(commentRepo)
-
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.Handler())
 
@@ -112,20 +108,13 @@ func main() {
 	mux.Handle("GET /posts/{post_id}", httpx.Wrap(ph.GetByID))
 	mux.Handle("GET /users/{user_id}/posts", httpx.Wrap(ph.ListByUser))
 
-	ch := comment.NewHandler(commentSvc)
-	mux.Handle("GET /posts/{post_id}/comments", httpx.Wrap(ch.ListByPost))
-
 	protect := func(pattern string, h http.Handler) {
 		mux.Handle(pattern, httpx.AuthMiddleware(h))
 	}
 
 	protect("POST /posts", httpx.Wrap(ph.Create))
-	protect("POST /posts/{post_id}/like", httpx.Wrap(ph.Like))
 	protect("POST /posts/{post_id}/view", httpx.Wrap(ph.AddView))
 	protect("POST /posts/upload", httpx.Wrap(ph.UploadAndCreate))
-
-	protect("POST /comments", httpx.Wrap(ch.Create))
-	protect("POST /comments/{comment_id}/like", httpx.Wrap(ch.Like))
 
 	protect("GET /whoami", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		uid, err := httpx.UserFromCtx(r)
@@ -151,163 +140,61 @@ func main() {
 	log.Fatal(srv.ListenAndServe())
 }
 
-internal/comment/comment.go
-package comment
-
-import "time"
-
-type Comment struct {
-	ID        uint64    `gorm:"primaryKey" json:"id"`
-	UserID    string    `gorm:"index;size:64" json:"user_id"`
-	PostID    uint64    `gorm:"index" json:"post_id"`
-	Name      string    `gorm:"size:120" json:"name"`
-	Text      string    `json:"text"`
-	Likes     uint64    `json:"likes"`
-	CreatedAt time.Time `json:"created_at"`
-}
-
-type CreateReq struct {
-	PostID uint64 `json:"post_id" validate:"required"`
-	Text   string `json:"text" validate:"required"`
-	Name   string `json:"name"`
-}
-
-internal/comment/handler.go
-package comment
+internal/feedback/client.go
+package feedback
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
-	"strconv"
-
-	"post-service/internal/shared/httpx"
-	"post-service/internal/shared/validate"
-)
-
-type Handler struct{ svc Service }
-
-func NewHandler(s Service) *Handler { return &Handler{svc: s} }
-
-func (h *Handler) Create(w http.ResponseWriter, r *http.Request) error {
-	uid, err := httpx.UserFromCtx(r)
-	if err != nil {
-		return err
-	}
-	in, err := httpx.Decode[CreateReq](r)
-	if err != nil {
-		return err
-	}
-	if err := validate.Struct(in); err != nil {
-		return err
-	}
-	c, err := h.svc.Create(uid, in)
-	if err != nil {
-		return err
-	}
-	httpx.WriteJSON(w, c, http.StatusCreated)
-	return nil
-}
-
-func (h *Handler) ListByPost(w http.ResponseWriter, r *http.Request) error {
-	pid, _ := strconv.ParseUint(r.PathValue("post_id"), 10, 64)
-	limit := httpx.QueryInt(r, "limit", 50)
-	offset := httpx.QueryInt(r, "offset", 0)
-	items, err := h.svc.ListByPost(pid, limit, offset)
-	if err != nil {
-		return err
-	}
-	httpx.WriteJSON(w, map[string]any{"items": items, "limit": limit, "offset": offset}, http.StatusOK)
-	return nil
-}
-
-func (h *Handler) Like(w http.ResponseWriter, r *http.Request) error {
-	uid, err := httpx.UserFromCtx(r)
-	if err != nil {
-		return err
-	}
-	id, _ := strconv.ParseUint(r.PathValue("comment_id"), 10, 64)
-	if err := h.svc.Like(uid, id); err != nil {
-		return err
-	}
-	httpx.WriteJSON(w, map[string]string{"status": "ok"}, http.StatusOK)
-	return nil
-}
-
-internal/comment/repository.go
-package comment
-
-import (
-	"post-service/internal/shared/db"
-
-	"gorm.io/gorm"
-)
-
-type Repository interface {
-	Create(c *Comment) (*Comment, error)
-	ListByPost(postID uint64, limit, offset int) ([]Comment, error)
-	IncLike(commentID uint64) error
-}
-
-type repo struct{ store *db.Store }
-
-func NewRepository(s *db.Store) Repository { return &repo{store: s} }
-
-func (r *repo) Create(c *Comment) (*Comment, error) {
-	if err := r.store.Base.Create(c).Error; err != nil {
-		return nil, err
-	}
-	return c, nil
-}
-
-func (r *repo) ListByPost(postID uint64, limit, offset int) ([]Comment, error) {
-	var out []Comment
-	err := r.store.Base.Where("post_id = ?", postID).
-		Order("created_at DESC").Limit(limit).Offset(offset).
-		Find(&out).Error
-	return out, err
-}
-
-func (r *repo) IncLike(commentID uint64) error {
-	return r.store.Base.Model(&Comment{}).
-		Where("id = ?", commentID).
-		UpdateColumn("likes", gorm.Expr("likes + 1")).Error
-}
-
-internal/comment/service.go
-package comment
-
-import (
+	"os"
 	"time"
-
-	"post-service/internal/shared/validate"
 )
 
-type Service interface {
-	Create(uid string, in CreateReq) (*Comment, error)
-	ListByPost(postID uint64, limit, offset int) ([]Comment, error)
-	Like(uid string, commentID uint64) error
+const DefaultTimeout = 3 * time.Second
+
+type Client struct {
+	base string
+	hc   *http.Client
 }
 
-type service struct{ repo Repository }
-
-func NewService(r Repository) Service { return &service{repo: r} }
-
-func (s *service) Create(uid string, in CreateReq) (*Comment, error) {
-	if err := validate.Struct(in); err != nil {
-		return nil, err
+func NewClient(base string) *Client {
+	if base == "" {
+		base = getenv("FEEDBACK_SERVICE_URL", "http://feedback-service:8084")
 	}
-	return s.repo.Create(&Comment{
-		UserID: uid, PostID: in.PostID, Name: in.Name, Text: in.Text,
-		CreatedAt: time.Now(),
-	})
+	return &Client{
+		base: base,
+		hc:   &http.Client{Timeout: DefaultTimeout},
+	}
 }
 
-func (s *service) ListByPost(postID uint64, limit, offset int) ([]Comment, error) {
-	return s.repo.ListByPost(postID, limit, offset)
+func getenv(k, d string) string {
+	if v := os.Getenv(k); v != "" {
+		return v
+	}
+	return d
 }
 
-func (s *service) Like(uid string, commentID uint64) error {
-	_ = uid
-	return s.repo.IncLike(commentID)
+func (c *Client) GetCounts(ctx context.Context, postID uint64) (likes int64, comments int64, err error) {
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/posts/%d/counts", c.base, postID), nil)
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return 0, 0, fmt.Errorf("feedback-service status %d", resp.StatusCode)
+	}
+	var out struct {
+		PostID   uint64 `json:"post_id"`
+		Likes    int64  `json:"likes"`
+		Comments int64  `json:"comments"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return 0, 0, err
+	}
+	return out.Likes, out.Comments, nil
 }
 
 internal/kafka/producer.go
@@ -382,7 +269,6 @@ internal/migrate/migrate.go
 package migrate
 
 import (
-	"post-service/internal/comment"
 	"post-service/internal/post"
 	"post-service/internal/shared/db"
 	"post-service/internal/tag"
@@ -393,7 +279,6 @@ func AutoMigrateAll(store *db.Store) error {
 		&post.Post{},
 		&post.PostTag{},
 		&tag.Tag{},
-		&comment.Comment{},
 	)
 }
 
@@ -401,10 +286,12 @@ internal/post/handler.go
 package post
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"strings"
 
+	"post-service/internal/feedback"
 	"post-service/internal/shared/httpx"
 	"post-service/internal/shared/validate"
 )
@@ -467,7 +354,25 @@ func (h *Handler) GetByID(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	httpx.WriteJSON(w, p, http.StatusOK)
+
+	// Enrich counts from feedback-service
+	ctx, cancel := context.WithTimeout(r.Context(), feedback.DefaultTimeout)
+	defer cancel()
+	fb := feedback.NewClient("")
+	likes, comments, _ := fb.GetCounts(ctx, p.ID)
+
+	out := map[string]any{
+		"id":          p.ID,
+		"user_id":     p.UserID,
+		"description": p.Description,
+		"media":       p.MediaURL,
+		"views":       p.Views,
+		"likes":       likes,
+		"comments":    comments,
+		"created_at":  p.CreatedAt,
+		"updated_at":  p.UpdatedAt,
+	}
+	httpx.WriteJSON(w, out, http.StatusOK)
 	return nil
 }
 
@@ -480,19 +385,6 @@ func (h *Handler) ListByUser(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	httpx.WriteJSON(w, map[string]any{"items": items, "limit": limit, "offset": offset}, http.StatusOK)
-	return nil
-}
-
-func (h *Handler) Like(w http.ResponseWriter, r *http.Request) error {
-	uid, err := httpx.UserFromCtx(r)
-	if err != nil {
-		return err
-	}
-	id, _ := strconv.ParseUint(r.PathValue("post_id"), 10, 64)
-	if err := h.svc.Like(uid, id); err != nil {
-		return err
-	}
-	httpx.WriteJSON(w, map[string]string{"status": "ok"}, http.StatusOK)
 	return nil
 }
 
@@ -515,7 +407,7 @@ type Post struct {
 	UserID      string    `gorm:"index;size:64" json:"user_id"`
 	Description string    `json:"description"`
 	MediaURL    string    `gorm:"size:512" json:"media"`
-	Likes       uint64    `json:"likes"`
+	Likes       uint64    `json:"-"` // hidden; feedback-service is the source of truth
 	Views       uint64    `json:"views"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
@@ -552,7 +444,6 @@ type Repository interface {
 	GetByID(id uint64) (*Post, error)
 	ListByUser(userID string, limit, offset int) ([]Post, error)
 	AttachTags(postID uint64, tagIDs []uint64) error
-	IncLike(postID uint64) error
 	IncView(postID uint64) error
 }
 
@@ -595,11 +486,6 @@ func (r *repo) AttachTags(postID uint64, tagIDs []uint64) error {
 	return r.store.Base.Clauses(clause.OnConflict{DoNothing: true}).Create(&items).Error
 }
 
-func (r *repo) IncLike(postID uint64) error {
-	res := r.store.Base.Model(&Post{}).Where("id = ?", postID).UpdateColumn("likes", gorm.Expr("likes + 1"))
-	return res.Error
-}
-
 func (r *repo) IncView(postID uint64) error {
 	res := r.store.Base.Model(&Post{}).Where("id = ?", postID).UpdateColumn("views", gorm.Expr("views + 1"))
 	return res.Error
@@ -630,7 +516,6 @@ type Service interface {
 	Create(uid string, in CreateReq) (*Post, error)
 	GetByID(id uint64) (*Post, error)
 	ListByUser(userID string, limit, offset int) ([]Post, error)
-	Like(uid string, postID uint64) error
 	AddView(postID uint64) error
 	UploadAndCreate(uid string, filename string, file io.Reader, description string, tags []string) (*Post, error)
 }
@@ -682,14 +567,11 @@ func (s *service) Create(uid string, in CreateReq) (*Post, error) {
 }
 
 func (s *service) GetByID(id uint64) (*Post, error) { return s.repo.GetByID(id) }
+
 func (s *service) ListByUser(userID string, limit, offset int) ([]Post, error) {
 	return s.repo.ListByUser(userID, limit, offset)
 }
 
-func (s *service) Like(uid string, postID uint64) error {
-	_ = uid
-	return s.repo.IncLike(postID)
-}
 func (s *service) AddView(postID uint64) error { return s.repo.IncView(postID) }
 
 func (s *service) UploadAndCreate(uid, filename string, file io.Reader, description string, tags []string) (*Post, error) {
