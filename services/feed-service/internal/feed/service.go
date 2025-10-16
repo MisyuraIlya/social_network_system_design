@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -25,6 +26,7 @@ type Service interface {
 type service struct {
 	repo             Repository
 	userSvcBase      string
+	postSvcBase      string
 	defaultFeedLimit int
 	httpClient       *http.Client
 }
@@ -36,6 +38,10 @@ func WithUserServiceBase(base string) Option {
 }
 func WithDefaultFeedLimit(n int) Option {
 	return func(s *service) { s.defaultFeedLimit = n }
+}
+
+func WithPostServiceBase(base string) Option {
+	return func(s *service) { s.postSvcBase = base }
 }
 
 func NewService(r Repository, opts ...Option) Service {
@@ -106,6 +112,13 @@ func (s *service) RebuildHomeFeed(ctx context.Context, userID, bearer string, li
 		if e == nil && len(ents) > 0 {
 			all = append(all, ents...)
 		}
+		// If Redis feed for this author is too small, backfill via post-service
+		if len(ents) < perAuthor {
+			more, e2 := s.fetchAuthorRecentPosts(ctx2, authorID, perAuthor-len(ents), bearer)
+			if e2 == nil && len(more) > 0 {
+				all = append(all, more...)
+			}
+		}
 	}
 
 	sort.Slice(all, func(i, j int) bool { return all[i].Score > all[j].Score })
@@ -113,6 +126,46 @@ func (s *service) RebuildHomeFeed(ctx context.Context, userID, bearer string, li
 		all = all[:limit]
 	}
 	return s.repo.StoreHomeFeed(ctx, userID, all)
+}
+
+func (s *service) fetchAuthorRecentPosts(ctx context.Context, authorID string, limit int, bearer string) ([]FeedEntry, error) {
+	if s.postSvcBase == "" {
+		return nil, nil
+	}
+	req, _ := http.NewRequestWithContext(ctx, "GET",
+		fmt.Sprintf("%s/users/%s/posts?limit=%d&offset=0", s.postSvcBase, authorID, limit), nil)
+
+	// If the post-service requires auth for user routes, pass through the caller's bearer
+	if strings.TrimSpace(bearer) != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("post-service status %d", resp.StatusCode)
+	}
+
+	var pl postListResp
+	if err := json.NewDecoder(resp.Body).Decode(&pl); err != nil {
+		return nil, err
+	}
+
+	out := make([]FeedEntry, 0, len(pl.Items))
+	for _, p := range pl.Items {
+		out = append(out, FeedEntry{
+			PostID:    p.ID,
+			AuthorID:  p.UserID,
+			MediaURL:  p.Media,
+			Snippet:   p.Description,
+			CreatedAt: p.CreatedAt,
+			Score:     float64(p.CreatedAt.Unix()),
+		})
+	}
+	return out, nil
 }
 
 // ---- Celebrities ----

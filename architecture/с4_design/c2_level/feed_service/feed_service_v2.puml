@@ -3,16 +3,17 @@
 
 Container(apiGateway, "API Gateway")
 Container(kafka, "Kafka", "message queue", "posts.created events")
+Container(postService, "Post Service", "author posts API")
 Container(userService, "User Service", "relationships API")
 
 System_Boundary(feedSystem, "Feed Service") {
-    Container(feedService, "Feed Service", "Builds/serves feeds from Redis; consumes Kafka")
+    Container(feedService, "Feed Service", "Consumes Kafka; stores feeds in Redis; enriches via post-service on rebuild")
     ContainerDb(redis, "Redis", "author/user/celebrity feeds")
 }
 
 Rel(apiGateway, feedService, "request", "REST")
-Rel(feedService, redis, "read/write feeds")
 Rel(kafka, feedService, "consume posts.created")
+Rel(feedService, redis, "read/write feeds")
 Rel(feedService, userService, "get relationships (followers/friends)")
-
+Rel(feedService, postService, "fetch recent posts for authors (enrichment)")
 @enduml

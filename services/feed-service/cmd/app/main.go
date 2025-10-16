@@ -80,6 +80,7 @@ func main() {
 	repo := feed.NewRepository(rdb)
 	svc := feed.NewService(repo,
 		feed.WithUserServiceBase(os.Getenv("USER_SERVICE_URL")),
+		feed.WithPostServiceBase(os.Getenv("POST_SERVICE_URL")),
 		feed.WithDefaultFeedLimit(atoiDef(os.Getenv("FEED_DEFAULT_LIMIT"), 100)),
 	)
 

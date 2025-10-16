@@ -13,6 +13,16 @@ type PostEvent struct {
 	Views       int64     `json:"views,omitempty"`
 }
 
+type postListResp struct {
+	Items []struct {
+		ID          int64     `json:"id"`
+		UserID      string    `json:"user_id"`
+		Description string    `json:"description"`
+		Media       string    `json:"media"`
+		CreatedAt   time.Time `json:"created_at"`
+	} `json:"items"`
+}
+
 type FeedEntry struct {
 	PostID    int64     `json:"post_id"`
 	AuthorID  string    `json:"author_id"`
