@@ -1,6 +1,6 @@
 # Project code dump
 
-- Generated: 2025-10-17 11:12:52+0300
+- Generated: 2025-10-17 11:38:01+0300
 - Root: `/home/spetsar/projects/social_network_system_design/services/feed-service`
 
 cmd/app/main.go
@@ -171,6 +171,7 @@ package feed
 
 import (
 	"net/http"
+	"os"
 
 	"feed-service/internal/shared/httpx"
 )
@@ -247,11 +248,10 @@ func (h *Handler) ListCelebrities(w http.ResponseWriter, r *http.Request) error 
 	return nil
 }
 
-// Protected: promote a user to celebrity set
+// Protected: promote a user to celebrity set (admin only via X-Admin-Token)
 func (h *Handler) PromoteCelebrity(w http.ResponseWriter, r *http.Request) error {
-	_, err := httpx.UserFromCtx(r) // simple auth gate; tighten to admin if you add roles later
-	if err != nil {
-		return err
+	if os.Getenv("ADMIN_TOKEN") == "" || r.Header.Get("X-Admin-Token") != os.Getenv("ADMIN_TOKEN") {
+		return httpx.ErrUnauthorized
 	}
 	uid := r.PathValue("user_id")
 	if uid == "" {
@@ -264,11 +264,10 @@ func (h *Handler) PromoteCelebrity(w http.ResponseWriter, r *http.Request) error
 	return nil
 }
 
-// Protected: demote a user from celebrity set
+// Protected: demote a user from celebrity set (admin only via X-Admin-Token)
 func (h *Handler) DemoteCelebrity(w http.ResponseWriter, r *http.Request) error {
-	_, err := httpx.UserFromCtx(r)
-	if err != nil {
-		return err
+	if os.Getenv("ADMIN_TOKEN") == "" || r.Header.Get("X-Admin-Token") != os.Getenv("ADMIN_TOKEN") {
+		return httpx.ErrUnauthorized
 	}
 	uid := r.PathValue("user_id")
 	if uid == "" {

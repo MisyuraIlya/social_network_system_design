@@ -1,6 +1,6 @@
 # Project code dump
 
-- Generated: 2025-10-17 11:12:53+0300
+- Generated: 2025-10-17 11:38:02+0300
 - Root: `/home/spetsar/projects/social_network_system_design/services/notification-service`
 
 cmd/app/main.go
@@ -455,18 +455,32 @@ func (r *redisRepo) List(ctx context.Context, userID string, limit int64) ([]Not
 }
 
 func (r *redisRepo) MarkRead(ctx context.Context, userID, notifID string) error {
-	items, err := r.List(ctx, userID, 200)
+	k := key(userID)
+	// Fetch entire list (bounded by reasonable size) and find the index
+	vals, err := r.rdb.LRange(ctx, k, 0, 999).Result()
 	if err != nil {
 		return err
 	}
-	r.rdb.Del(ctx, key(userID))
-	for i := range items {
-		if items[i].ID == notifID {
-			items[i].Read = true
+	idx := -1
+	var updated string
+	for i, v := range vals {
+		var n Notification
+		if json.Unmarshal([]byte(v), &n) == nil {
+			if n.ID == notifID {
+				n.Read = true
+				b, _ := json.Marshal(n)
+				updated = string(b)
+				idx = i
+				break
+			}
 		}
-		_ = r.Push(ctx, items[len(items)-1-i])
 	}
-	return nil
+	if idx < 0 {
+		// nothing to update
+		return nil
+	}
+	// LSET updates in-place; maintains order and is O(1)
+	return r.rdb.LSet(ctx, k, int64(idx), updated).Err()
 }
 
 internal/notification/service.go

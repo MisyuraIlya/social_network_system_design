@@ -135,9 +135,8 @@ Table messages {
   chat_id        bigint       [not null]
   text           text
   media_url      varchar(512)
-  is_seen        boolean      [not null, default: false]
   send_time      timestamp    [not null]             // set by service
-  delivered_time timestamp                     
+  delivered_time timestamp
 
   indexes {
     chat_id           [name: 'idx_messages_chat']
@@ -322,42 +321,120 @@ Ref: users.user_id  < relationships.user_id
 Ref: users.user_id  < relationships.related_id
 
 
-here c4 designs 
-here c1 level design:
-@startuml
-!include <C4/C4_Container>
+here c4 designs:
+c1 level design:
+// Service: user-service
+// Replication: master-slave (async), RF=3
+// Sharding: key-based by user_id (user_id encodes shard id like "shard-uuid")
+// Notes: FKs shown for clarity; in practice each shard DB holds its own partition.
 
-Person(user, "User")
-Container(loadBalancer, "Load Balancer", "Nginx")
-Container(apiGateway, "API Gateway")
-Container(cdn, "CDN")
+Table users {
+  id         bigint       [pk, increment]                     // internal numeric PK
+  user_id    varchar(64)  [unique, note: 'Stable external ID with shard prefix']
+  shard_id   int          [not null, note: 'For routing; also in JWT']
+  email      varchar(120) [unique, not null]
+  pass_hash  varchar(255) [not null]
+  name       varchar(100) [not null]
+  created_at timestamp    [default: `now()`]
+  updated_at timestamp    [default: `now()`]
 
-Container(postService, "Post Service", "Handling posts")
-Container(feedService, "Feed Service", "Сollects a feed of posts")
-Container(messageService, "Message Service", "Handling messages")
-Container(userService, "User Service", "Handling actions with user")
-Container(feedbackService, "Feedback Service", "Handling comments, likes")
-
-System_Boundary(mediaSystem, "Media Service") {
-    Container(mediaService, "Media Service", "Handling media files")
-    ContainerDb(s3, "S3", "Blob storage")
+  indexes {
+    shard_id                // read routing
+    (email)                 // login path
+    (user_id)               // lookups by external id
+  }
 }
 
-Rel(user, loadBalancer, "Request", "REST")
-Rel(loadBalancer, apiGateway, "Request", "REST")
-Rel(user, cdn, "Downloads media")
-Rel(apiGateway, postService, "Send post", )
-Rel(apiGateway, mediaService, "Uploads media files")
-Rel(apiGateway, feedService, "Get feed")
-Rel(apiGateway, messageService, "Get/Send message")
-Rel(apiGateway, userService, "Get user_data/relation")
-Rel(apiGateway, feedbackService, "Get\Set comment/like")
+Table profiles {
+  user_id     varchar(64) [pk, note: 'Same as users.user_id']
+  description text
+  city_id     bigint
+  education   jsonb
+  hobby       jsonb
+  updated_at  timestamp    [default: `now()`]
 
-Rel(mediaService, s3, "Uploads media files")
-Rel(cdn, s3, "Downloads media from origin s3")
-@enduml
+  indexes {
+    city_id
+  }
+}
 
-here c2 level design services
+Table cities {
+  id         bigint       [pk, increment]
+  name       varchar(120) [unique, not null]
+}
+
+Table interests {
+  id         bigint       [pk, increment]
+  name       varchar(120) [unique, not null]
+}
+
+Table interest_users {
+  user_id     varchar(64) [not null]
+  interest_id bigint      [not null]
+
+  indexes {
+    (user_id, interest_id) [pk, name: 'pk_interest_users']  // composite PK
+    user_id                 [name: 'idx_interest_users_user']
+    interest_id             [name: 'idx_interest_users_interest']
+  }
+}
+
+Table follows {
+  user_id    varchar(64) [not null]  // follower
+  target_id  varchar(64) [not null]  // followee
+  created_at timestamp    [default: `now()`]
+
+  indexes {
+    (user_id, target_id) [pk, name: 'pk_follows']
+    user_id              [name: 'idx_follows_user']
+    target_id            [name: 'idx_follows_target']
+  }
+}
+
+Table friends {
+  user_id    varchar(64) [not null]
+  friend_id  varchar(64) [not null]
+  created_at timestamp    [default: `now()`]
+
+  indexes {
+    (user_id, friend_id) [pk, name: 'pk_friends']
+    user_id              [name: 'idx_friends_user']
+    friend_id            [name: 'idx_friends_friend']
+  }
+}
+
+Table relationships {
+  user_id    varchar(64) [not null]
+  related_id varchar(64) [not null]
+  type       int         [not null, note: '1=Follow, 2=Friend, 3=Block (see code)']
+  created_at timestamp    [default: `now()`]
+
+  indexes {
+    (user_id, related_id, type) [pk, name: 'pk_relationships']
+    user_id                     [name: 'idx_relationships_user']
+    related_id                  [name: 'idx_relationships_related']
+    (user_id, type)             [name: 'idx_relationships_user_type']
+  }
+}
+
+/* Top-level refs (diagram only; enforce per-shard in practice) */
+Ref: users.user_id  < profiles.user_id
+Ref: cities.id      < profiles.city_id
+
+Ref: users.user_id  < interest_users.user_id
+Ref: interests.id   < interest_users.interest_id
+
+Ref: users.user_id  < follows.user_id
+Ref: users.user_id  < follows.target_id
+
+Ref: users.user_id  < friends.user_id
+Ref: users.user_id  < friends.friend_id
+
+Ref: users.user_id  < relationships.user_id
+Ref: users.user_id  < relationships.related_id
+
+
+c2 level designs:
 feed service:
 @startuml
 !include <C4/C4_Container>
@@ -379,8 +456,7 @@ Rel(feedService, userService, "get relationships (followers/friends)")
 Rel(feedService, postService, "fetch recent posts for authors (enrichment)")
 @enduml
 
-
-feedback service:
+feedback service
 @startuml
 !include <C4/C4_Container>
 
@@ -416,7 +492,6 @@ Rel(cdn, s3, "Downloads media from origin s3")
 @enduml
 
 message service:
-
 @startuml
 !include <C4/C4_Container>
 

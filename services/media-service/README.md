@@ -1,6 +1,6 @@
 # Project code dump
 
-- Generated: 2025-10-17 11:12:52+0300
+- Generated: 2025-10-17 11:38:02+0300
 - Root: `/home/spetsar/projects/social_network_system_design/services/media-service`
 
 cmd/app/main.go
@@ -161,9 +161,10 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 	}
 	url, _ := h.svc.s3.PresignGet(r.Context(), key, 15*time.Minute)
 	httpx.WriteJSON(w, map[string]any{
-		"key":         key,
-		"contentType": ct,
-		"url":         url.String(),
+		"key":              key,
+		"contentType":      ct,
+		"url":              url.String(),
+		"required_headers": map[string]string{"Content-Type": ct},
 	}, http.StatusCreated)
 }
 
@@ -226,10 +227,11 @@ func (h *Handler) PresignPut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, map[string]any{
-		"key":    body.Key,
-		"url":    u.String(),
-		"ttl":    body.ExpirySec,
-		"method": "PUT",
+		"key":              body.Key,
+		"url":              u.String(),
+		"ttl":              body.ExpirySec,
+		"method":           "PUT",
+		"required_headers": map[string]string{"Content-Type": body.ContentType},
 	}, http.StatusOK)
 }
 
@@ -302,9 +304,10 @@ func WriteError(w http.ResponseWriter, status int, err error, reason string) {
 
 func AuthMiddleware(next http.Handler) http.Handler {
 	secret := os.Getenv("JWT_SECRET")
+	allowDev := strings.EqualFold(os.Getenv("ALLOW_DEV_NOAUTH"), "true")
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if secret == "" {
-			// dev mode: attach dummy uid "0"
+		if allowDev && secret == "" {
+			// explicit dev bypass only when ALLOW_DEV_NOAUTH=true
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userKey, "0")))
 			return
 		}
@@ -413,7 +416,7 @@ func (s *Storage) PresignGet(ctx context.Context, key string, ttl time.Duration)
 	return s.client.PresignedGetObject(ctx, s.cfg.Bucket, key, ttl, nil)
 }
 
-func (s *Storage) PresignPut(ctx context.Context, key string, ttl time.Duration, contentType string) (*url.URL, error) {
+func (s *Storage) PresignPut(ctx context.Context, key string, ttl time.Duration, _ string) (*url.URL, error) {
 	return s.client.PresignedPutObject(ctx, s.cfg.Bucket, key, ttl)
 }
 

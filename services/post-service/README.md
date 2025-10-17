@@ -1,6 +1,6 @@
 # Project code dump
 
-- Generated: 2025-10-17 11:12:53+0300
+- Generated: 2025-10-17 11:38:02+0300
 - Root: `/home/spetsar/projects/social_network_system_design/services/post-service`
 
 cmd/app/main.go
@@ -204,6 +204,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -219,17 +220,39 @@ type writer struct {
 	w *kgo.Writer
 }
 
+// NewWriter creates a Kafka writer with configurable durability.
+// Env overrides (optional):
+//   - KAFKA_BOOTSTRAP_SERVERS: "host1:9092,host2:9092" (fallback to arg, then "kafka:9092")
+//   - KAFKA_REQUIRED_ACKS: "none" | "one" | "all" (default: "one")
+//   - KAFKA_ASYNC: "true" | "false" (default: "false")
 func NewWriter(bootstrapServers, topic string) (Writer, error) {
-	addr := "kafka:9092"
-	if strings.TrimSpace(bootstrapServers) != "" {
-		addr = bootstrapServers
+	addr := strings.TrimSpace(bootstrapServers)
+	if addr == "" {
+		addr = strings.TrimSpace(os.Getenv("KAFKA_BOOTSTRAP_SERVERS"))
 	}
+	if addr == "" {
+		addr = "kafka:9092"
+	}
+
+	acksStr := strings.ToLower(strings.TrimSpace(os.Getenv("KAFKA_REQUIRED_ACKS")))
+	var requiredAcks kgo.RequiredAcks
+	switch acksStr {
+	case "none":
+		requiredAcks = kgo.RequireNone
+	case "all":
+		requiredAcks = kgo.RequireAll
+	default:
+		requiredAcks = kgo.RequireOne
+	}
+
+	async := strings.EqualFold(os.Getenv("KAFKA_ASYNC"), "true")
+
 	w := &kgo.Writer{
 		Addr:         kgo.TCP(addr),
 		Topic:        topic,
 		Balancer:     &kgo.LeastBytes{},
-		RequiredAcks: kgo.RequireOne,
-		Async:        false,
+		RequiredAcks: requiredAcks,
+		Async:        async,
 		BatchTimeout: 50 * time.Millisecond,
 	}
 	return &writer{w: w}, nil
@@ -240,7 +263,7 @@ func (wr *writer) WriteJSON(ctx context.Context, v any) error {
 	if err != nil {
 		return err
 	}
-	msg := kgo.Message{Value: b}
+	msg := kgo.Message{Value: b, Time: time.Now()}
 	return wr.w.WriteMessages(ctx, msg)
 }
 
@@ -710,11 +733,12 @@ import (
 	"strings"
 
 	"post-service/internal/shared/jwt"
+
+	"gorm.io/gorm"
 )
 
 type HandlerFunc func(http.ResponseWriter, *http.Request) error
 
-// ---------- Standard error shape ----------
 type APIError struct {
 	Error  string `json:"error"`
 	Reason string `json:"reason,omitempty"`
@@ -745,6 +769,8 @@ func Wrap(fn HandlerFunc) http.Handler {
 			code := http.StatusBadRequest
 			if errors.Is(err, ErrUnauthorized) {
 				code = http.StatusUnauthorized
+			} else if errors.Is(err, gorm.ErrRecordNotFound) {
+				code = http.StatusNotFound
 			}
 			WriteError(w, code, err, "")
 		}

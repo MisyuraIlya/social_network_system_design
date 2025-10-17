@@ -1,6 +1,6 @@
 # Project code dump
 
-- Generated: 2025-10-17 11:12:51+0300
+- Generated: 2025-10-17 11:38:01+0300
 - Root: `/home/spetsar/projects/social_network_system_design/services/feedback-service`
 
 cmd/app/main.go
@@ -314,17 +314,35 @@ func (r *repo) DeleteMine(uid string, commentID uint64) error {
 }
 
 func (r *repo) IncSum(postID uint64, delta int) error {
-	if err := r.db.Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "post_id"}},
-		DoUpdates: clause.Assignments(map[string]any{"comments_count": gorm.Expr("post_comments_sums.comments_count + EXCLUDED.comments_count")}),
-	}).Create(&PostCommentsSum{PostID: postID, CommentsCount: int64(delta)}).Error; err != nil {
+	ctx := context.Background()
+
+	if delta > 0 {
+		// Upsert add
+		if err := r.db.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "post_id"}},
+			DoUpdates: clause.Assignments(map[string]any{"comments_count": gorm.Expr("post_comments_sums.comments_count + EXCLUDED.comments_count")}),
+		}).Create(&PostCommentsSum{PostID: postID, CommentsCount: int64(delta)}).Error; err != nil {
+			return err
+		}
+		// Redis INCR
+		if _, err := r.rdb.IncrBy(ctx, ckey(postID), int64(delta)).Result(); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	// Clamp to >= 0 on DB
+	if err := r.db.Exec(
+		"UPDATE post_comments_sums SET comments_count = GREATEST(comments_count + ?, 0) WHERE post_id = ?",
+		delta, postID,
+	).Error; err != nil {
 		return err
 	}
-	ctx := context.Background()
-	if delta > 0 {
-		_, _ = r.rdb.Incr(ctx, ckey(postID)).Result()
-	} else {
-		_, _ = r.rdb.Decr(ctx, ckey(postID)).Result()
+
+	// Redis DECR and clamp
+	n, _ := r.rdb.IncrBy(ctx, ckey(postID), int64(delta)).Result() // delta is negative
+	if n < 0 {
+		_ = r.rdb.Set(ctx, ckey(postID), 0, 0).Err()
 	}
 	return nil
 }
@@ -690,6 +708,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"gorm.io/gorm"
 )
 
 type HandlerFunc func(http.ResponseWriter, *http.Request) error
@@ -724,6 +744,8 @@ func Wrap(fn HandlerFunc) http.Handler {
 			code := http.StatusBadRequest
 			if errors.Is(err, ErrUnauthorized) {
 				code = http.StatusUnauthorized
+			} else if errors.Is(err, gorm.ErrRecordNotFound) {
+				code = http.StatusNotFound
 			}
 			WriteError(w, code, err, "")
 		}
