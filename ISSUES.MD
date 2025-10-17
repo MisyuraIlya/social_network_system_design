@@ -55,3 +55,5 @@ Impact: Anyone can fetch someone else’s notifications by user_id.
 Fix: Require auth and ensure {user_id} equals sub from JWT (or drop the path variant and only serve /notifications).
 
 6. feed service c2 lvl design with v1 and v2 what it correct?
+
+7. feedback-service Redis addr has no defaults Addr: os.Getenv("REDIS_HOST")+":"+os.Getenv("REDIS_PORT") ⇒ could become ":" if unset. Fix: Provide sane defaults (e.g., redis-feedback:6379) like other services.

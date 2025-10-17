@@ -1,3 +1,4 @@
+// services/feedback-service/cmd/app/main.go
 package main
 
 import (
@@ -8,6 +9,7 @@ import (
 	"feedback-gateway/internal/shared/db"
 	"feedback-gateway/internal/shared/httpx"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -78,8 +80,10 @@ func main() {
 	store := db.OpenFromEnv()
 
 	// Redis
+	rHost := envOr("REDIS_HOST", "redis-feedback")
+	rPort := envOr("REDIS_PORT", "6379")
 	rdb := redis.NewClient(&redis.Options{
-		Addr:     os.Getenv("REDIS_HOST") + ":" + os.Getenv("REDIS_PORT"),
+		Addr:     net.JoinHostPort(rHost, rPort),
 		Password: "",
 		DB:       0,
 	})
@@ -142,4 +146,11 @@ func main() {
 	}
 	log.Printf("feedback-service listening on %s", addr)
 	log.Fatal(srv.ListenAndServe())
+}
+
+func envOr(k, def string) string {
+	if v := os.Getenv(k); v != "" {
+		return v
+	}
+	return def
 }
