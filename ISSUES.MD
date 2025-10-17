@@ -79,3 +79,9 @@ Remove is_seen (avoid dual sources of truth)
 13. Consistent error shapes
 
 Some middlewares produce {error, reason}, some just {error}. Consider a small shared package or guideline for uniform API errors (helps clients & observability).
+
+14. Rate limiting / abuse
+
+High-churn endpoints (likes, comments, message send, feed rebuild) lack rate limits.
+
+Add gateway or per-service throttling (e.g., token bucket in Redis) and idempotency keys for uploads/sends if needed.

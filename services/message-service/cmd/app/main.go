@@ -9,10 +9,12 @@ import (
 	"time"
 
 	"message-service/internal/chat"
+	"message-service/internal/idem"
 	"message-service/internal/kafka"
 	"message-service/internal/media"
 	"message-service/internal/message"
 	"message-service/internal/migrate"
+	"message-service/internal/ratelimit"
 	"message-service/internal/redisx"
 	"message-service/internal/shared/db"
 	"message-service/internal/shared/httpx"
@@ -77,66 +79,69 @@ func main() {
 		_ = shutdown(c)
 	}()
 
-	// Postgres
 	store := db.OpenFromEnv()
 
-	// Redis
 	rds := redisx.NewClientFromEnv()
 
-	// Kafka producer
+	limiter := ratelimit.New(rds)
+	idemStore := idem.New(rds)
+
 	kWriter, err := kafka.NewWriter(os.Getenv("KAFKA_BOOTSTRAP_SERVERS"), "messages.created")
 	if err != nil {
 		log.Fatalf("kafka writer: %v", err)
 	}
 	defer kWriter.Close()
 
-	// Media client
 	mediaCli := media.New(os.Getenv("MEDIA_SERVICE_URL"))
 
-	// Auto-migrate schema
 	if os.Getenv("AUTO_MIGRATE") == "true" {
 		if err := migrate.AutoMigrateAll(store); err != nil {
 			log.Fatalf("migrate: %v", err)
 		}
 	}
 
-	// Wire repos & services
 	chatRepo := chat.NewRepository(store)
 	chatSvc := chat.NewService(chatRepo, rds)
 
 	msgRepo := message.NewRepository(store)
 	msgSvc := message.NewService(msgRepo, chatSvc, rds, kWriter, mediaCli)
 
-	// HTTP
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.Handler())
 
-	// Public (lookups)
 	ch := chat.NewHandler(chatSvc)
-	mh := message.NewHandler(msgSvc)
+	mh := message.NewHandler(msgSvc).WithIdem(idemStore)
 
 	mux.Handle("GET /chats/{chat_id}", httpx.Wrap(ch.GetByID))
 
-	// Protected
 	protect := func(pattern string, h http.Handler) {
 		mux.Handle(pattern, httpx.AuthMiddleware(h))
 	}
 
+	sendLimit := func(next http.Handler) http.Handler {
+		return limiter.LimitHTTP(20, 10*time.Second, func(r *http.Request) (string, error) {
+			return httpx.UserFromCtx(r)
+		}, next)
+	}
+	readLimit := func(next http.Handler) http.Handler {
+		return limiter.LimitHTTP(60, 10*time.Second, func(r *http.Request) (string, error) {
+			return httpx.UserFromCtx(r)
+		}, next)
+	}
+
 	// Chats
-	protect("POST /chats", httpx.Wrap(ch.Create))                          // create chat (1:1 or group)
-	protect("GET /chats", httpx.Wrap(ch.ListMine))                         // list my chats
-	protect("POST /chats/{chat_id}/join", httpx.Wrap(ch.Join))             // join (add self)
-	protect("POST /chats/{chat_id}/add/{user_id}", httpx.Wrap(ch.AddUser)) // add someone
-	protect("POST /chats/{chat_id}/leave", httpx.Wrap(ch.Leave))           // leave chat
-	mux.Handle("GET /chats/popular", httpx.Wrap(ch.Popular))               // read-only, from Redis
+	protect("POST /chats", httpx.Wrap(ch.Create))
+	protect("GET /chats", httpx.Wrap(ch.ListMine))
+	protect("POST /chats/{chat_id}/join", httpx.Wrap(ch.Join))
+	protect("POST /chats/{chat_id}/add/{user_id}", httpx.Wrap(ch.AddUser))
+	protect("POST /chats/{chat_id}/leave", httpx.Wrap(ch.Leave))
+	mux.Handle("GET /chats/popular", httpx.Wrap(ch.Popular))
 
-	// Messages
-	protect("GET /chats/{chat_id}/messages", httpx.Wrap(mh.ListByChat)) // history
-	protect("POST /messages", httpx.Wrap(mh.Send))                      // text-only
-	protect("POST /messages/upload", httpx.Wrap(mh.UploadAndSend))      // upload media + send
-	protect("POST /messages/{message_id}/seen", httpx.Wrap(mh.MarkSeen))
+	protect("GET /chats/{chat_id}/messages", readLimit(httpx.Wrap(mh.ListByChat)))
+	protect("POST /messages", sendLimit(httpx.Wrap(mh.Send)))
+	protect("POST /messages/upload", sendLimit(httpx.Wrap(mh.UploadAndSend)))
+	protect("POST /messages/{message_id}/seen", readLimit(httpx.Wrap(mh.MarkSeen)))
 
-	// Health/info
 	protect("GET /whoami", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		uid, err := httpx.UserFromCtx(r)
 		if err != nil {

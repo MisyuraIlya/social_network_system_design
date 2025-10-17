@@ -27,14 +27,6 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
 )
 
-func atoiDef(s string, def int) int {
-	n, err := strconv.Atoi(s)
-	if err != nil || n <= 0 {
-		return def
-	}
-	return n
-}
-
 func initOTEL(ctx context.Context) func(context.Context) error {
 	endpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
 	if endpoint == "" {
@@ -91,7 +83,6 @@ func main() {
 		log.Fatalf("redis ping: %v", err)
 	}
 
-	// Auto migrate
 	if os.Getenv("AUTO_MIGRATE") == "true" {
 		if err := migrate.AutoMigrateAll(store); err != nil {
 			log.Fatalf("migrate: %v", err)

@@ -10,6 +10,7 @@ import (
 
 	"feed-service/internal/feed"
 	"feed-service/internal/kafka"
+	"feed-service/internal/ratelimit"
 	"feed-service/internal/shared/httpx"
 	"feed-service/internal/shared/redisx"
 
@@ -74,16 +75,28 @@ func main() {
 		_ = shutdown(c)
 	}()
 
+	// Redis
 	rdb := redisx.OpenFromEnv()
 	defer func(rdb *redis.Client) { _ = rdb.Close() }(rdb)
 
+	// Rate limiter (Redis-backed)
+	limiter := ratelimit.New(rdb)
+	rebuildLimit := func(next http.Handler) http.Handler {
+		return limiter.LimitHTTP(1, 60*time.Second, func(r *http.Request) (string, error) {
+			return httpx.UserFromCtx(r)
+		}, next)
+	}
+
+	// Repo & Service
 	repo := feed.NewRepository(rdb)
-	svc := feed.NewService(repo,
+	svc := feed.NewService(
+		repo,
 		feed.WithUserServiceBase(os.Getenv("USER_SERVICE_URL")),
-		feed.WithPostServiceBase(os.Getenv("POST_SERVICE_URL")),
+		feed.WithPostServiceBase(os.Getenv("POST_SERVICE_URL")), // optional enrichment endpoint
 		feed.WithDefaultFeedLimit(atoiDef(os.Getenv("FEED_DEFAULT_LIMIT"), 100)),
 	)
 
+	// Kafka consumer
 	bootstrap := os.Getenv("KAFKA_BOOTSTRAP_SERVERS")
 	if bootstrap == "" {
 		bootstrap = "kafka:9092"
@@ -118,9 +131,8 @@ func main() {
 		mux.Handle(pattern, httpx.AuthMiddleware(handler))
 	}
 	protect("GET /feed", httpx.Wrap(h.GetHomeFeed))
-	protect("POST /feed/rebuild", httpx.Wrap(h.RebuildHomeFeed))
+	protect("POST /feed/rebuild", rebuildLimit(httpx.Wrap(h.RebuildHomeFeed)))
 
-	// Manage celebrity set (keep behind auth; later you can gate with roles/claims)
 	protect("POST /celebrities/{user_id}", httpx.Wrap(h.PromoteCelebrity))
 	protect("DELETE /celebrities/{user_id}", httpx.Wrap(h.DemoteCelebrity))
 
