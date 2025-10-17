@@ -63,3 +63,5 @@ Fix: Require auth and ensure {user_id} equals sub from JWT (or drop the path var
 message-service writer: RequiredAcks: RequireNone, Async: true → higher throughput, lower durability.
 
 Fix (if you care about durability): Use RequireOne (or RequireAll) and/or sync mode for user messages. Keep feed/post event producer decisions explicit.
+
+9. media-service S3 PresignPut You build reqParams with content-type but don’t pass it (MinIO’s PresignedPutObject doesn’t take that arg anyway). Not harmful; just remove dead code or add a comment.

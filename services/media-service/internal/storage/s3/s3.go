@@ -69,9 +69,5 @@ func (s *Storage) PresignGet(ctx context.Context, key string, ttl time.Duration)
 }
 
 func (s *Storage) PresignPut(ctx context.Context, key string, ttl time.Duration, contentType string) (*url.URL, error) {
-	reqParams := make(url.Values)
-	if contentType != "" {
-		reqParams.Set("content-type", contentType)
-	}
 	return s.client.PresignedPutObject(ctx, s.cfg.Bucket, key, ttl)
 }
