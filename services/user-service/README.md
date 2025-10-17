@@ -1,7 +1,7 @@
 # Project code dump
 
-- Generated: 2025-10-16 16:53:33+0300
-- Root: `/home/ilya/projects/social_network_system_design/services/user-service`
+- Generated: 2025-10-17 11:12:53+0300
+- Root: `/home/spetsar/projects/social_network_system_design/services/user-service`
 
 cmd/app/main.go
 package main

@@ -1,7 +1,7 @@
 # Project code dump
 
-- Generated: 2025-10-16 16:53:32+0300
-- Root: `/home/ilya/projects/social_network_system_design/services/notification-service`
+- Generated: 2025-10-17 11:12:53+0300
+- Root: `/home/spetsar/projects/social_network_system_design/services/notification-service`
 
 cmd/app/main.go
 package main
@@ -169,14 +169,11 @@ func main() {
 		_, _ = w.Write([]byte("ok"))
 	})
 
-	// Public (optional user_id in path; falls back to auth if missing)
-	mux.Handle("GET /users/{user_id}/notifications", httpx.Wrap(h.List))
-
-	// Protected
 	protect := func(pattern string, handler http.Handler) {
 		mux.Handle(pattern, httpx.AuthMiddleware(handler))
 	}
 	protect("GET /notifications", httpx.Wrap(h.List))
+	protect("GET /users/{user_id}/notifications", httpx.Wrap(h.List))
 	protect("POST /notifications/{id}/read", httpx.Wrap(h.MarkRead))
 	protect("POST /notifications/test", httpx.Wrap(h.CreateTest))
 
@@ -313,18 +310,17 @@ type Handler struct{ svc Service }
 func NewHandler(s Service) *Handler { return &Handler{svc: s} }
 
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) error {
-	userID := r.PathValue("user_id")
-	if userID == "" {
-		if uid, err := httpx.UserFromCtx(r); err == nil {
-			userID = uid
-		}
+	uid, err := httpx.UserFromCtx(r)
+	if err != nil {
+		return errUnauthorized("auth required")
 	}
-	if userID == "" {
-		return errBadReq("missing user_id")
+
+	if pathUID := r.PathValue("user_id"); pathUID != "" && pathUID != uid {
+		return errUnauthorized("forbidden: cannot read other users' notifications")
 	}
 
 	limit, _ := strconv.ParseInt(r.URL.Query().Get("limit"), 10, 64)
-	items, err := h.svc.List(r.Context(), userID, limit)
+	items, err := h.svc.List(r.Context(), uid, limit)
 	if err != nil {
 		return err
 	}
@@ -519,26 +515,29 @@ package httpx
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"os"
 	"strings"
 	"time"
+
+	jw "github.com/golang-jwt/jwt/v5"
 )
 
 type HandlerFunc func(http.ResponseWriter, *http.Request) error
 
-func Wrap(fn HandlerFunc) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := fn(w, r); err != nil {
-			WriteJSON(w, map[string]any{"error": err.Error()}, http.StatusBadRequest)
-		}
-	})
+type APIError struct {
+	Error  string `json:"error"`
+	Reason string `json:"reason,omitempty"`
+	Status int    `json:"status"`
 }
+
+type ctxKey string
+
+const userKey ctxKey = "user_id"
+
+var ErrUnauthorized = errors.New("unauthorized")
 
 func WriteJSON(w http.ResponseWriter, v any, code int) {
 	w.Header().Set("Content-Type", "application/json")
@@ -546,9 +545,46 @@ func WriteJSON(w http.ResponseWriter, v any, code int) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-type ctxKey string
+func WriteError(w http.ResponseWriter, status int, err error, reason string) {
+	if err == nil {
+		err = errors.New(http.StatusText(status))
+	}
+	WriteJSON(w, APIError{Error: err.Error(), Reason: reason, Status: status}, status)
+}
 
-const userKey ctxKey = "user_id"
+func secret() []byte {
+	if s := os.Getenv("JWT_SECRET"); s != "" {
+		return []byte(s)
+	}
+	return []byte("replace-this-with-a-strong-secret")
+}
+
+func parseJWT(tok string) (string, error) {
+	t, err := jw.Parse(tok, func(t *jw.Token) (any, error) { return secret(), nil })
+	if err != nil || !t.Valid {
+		return "", errors.New("invalid token")
+	}
+	mc, ok := t.Claims.(jw.MapClaims)
+	if !ok {
+		return "", errors.New("bad claims")
+	}
+	uid, _ := mc["sub"].(string)
+	if uid == "" {
+		return "", errors.New("missing sub")
+	}
+	if exp, ok := mc["exp"].(float64); ok && time.Now().Unix() > int64(exp) {
+		return "", errors.New("token expired")
+	}
+	return uid, nil
+}
+
+func Wrap(fn HandlerFunc) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := fn(w, r); err != nil {
+			WriteError(w, http.StatusBadRequest, err, "")
+		}
+	})
+}
 
 func AuthMiddleware(next http.Handler) http.Handler {
 	secret := os.Getenv("JWT_SECRET")
@@ -557,15 +593,15 @@ func AuthMiddleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		auth := r.Header.Get("Authorization")
-		if !strings.HasPrefix(auth, "Bearer ") {
-			WriteJSON(w, map[string]string{"error": "missing token"}, http.StatusUnauthorized)
+		h := r.Header.Get("Authorization")
+		if !strings.HasPrefix(h, "Bearer ") {
+			WriteError(w, http.StatusUnauthorized, ErrUnauthorized, "missing_bearer")
 			return
 		}
-		token := strings.TrimPrefix(auth, "Bearer ")
-		uid, err := verifyToken(token, secret)
+		token := strings.TrimSpace(h[7:])
+		uid, err := parseJWT(token)
 		if err != nil {
-			WriteJSON(w, map[string]string{"error": "invalid token"}, http.StatusUnauthorized)
+			WriteError(w, http.StatusUnauthorized, ErrUnauthorized, "invalid_token")
 			return
 		}
 		ctx := context.WithValue(r.Context(), userKey, uid)
@@ -576,39 +612,62 @@ func AuthMiddleware(next http.Handler) http.Handler {
 func UserFromCtx(r *http.Request) (string, error) {
 	uid, _ := r.Context().Value(userKey).(string)
 	if uid == "" {
-		return "", errors.New("no user in context")
+		return "", ErrUnauthorized
 	}
 	return uid, nil
 }
 
-func verifyToken(token, secret string) (string, error) {
-	parts := strings.Split(token, ".")
-	if len(parts) != 2 {
-		return "", errors.New("bad token")
+func BearerToken(r *http.Request) string {
+	h := r.Header.Get("Authorization")
+	if strings.HasPrefix(h, "Bearer ") {
+		return strings.TrimSpace(h[7:])
 	}
-	raw, sig := parts[0], parts[1]
-	sum := hmac.New(sha256.New, []byte(secret))
-	sum.Write([]byte(raw))
-	expected := base64.RawURLEncoding.EncodeToString(sum.Sum(nil))
-	if !hmac.Equal([]byte(sig), []byte(expected)) {
-		return "", errors.New("bad sig")
-	}
-	b, err := base64.RawURLEncoding.DecodeString(raw)
-	if err != nil {
-		return "", err
-	}
-	return string(b), nil
-}
-
-func MintToken(userID, secret string) string {
-	raw := base64.RawURLEncoding.EncodeToString([]byte(userID))
-	sum := hmac.New(sha256.New, []byte(secret))
-	sum.Write([]byte(raw))
-	sig := base64.RawURLEncoding.EncodeToString(sum.Sum(nil))
-	return raw + "." + sig
+	return ""
 }
 
 func NowUTC() time.Time { return time.Now().UTC() }
+
+internal/shared/jwt/jwt.go
+package jwt
+
+import (
+	"errors"
+	"os"
+	"time"
+
+	jw "github.com/golang-jwt/jwt/v5"
+)
+
+func secret() []byte {
+	if s := os.Getenv("JWT_SECRET"); s != "" {
+		return []byte(s)
+	}
+	// dev fallback; replace in prod
+	return []byte("replace-this-with-a-strong-secret")
+}
+
+// Parse validates HS256 JWT and returns the user id from the "sub" claim.
+func Parse(tok string) (string, error) {
+	t, err := jw.Parse(tok, func(t *jw.Token) (any, error) {
+		return secret(), nil
+	})
+	if err != nil || !t.Valid {
+		return "", errors.New("invalid token")
+	}
+	mc, ok := t.Claims.(jw.MapClaims)
+	if !ok {
+		return "", errors.New("bad claims")
+	}
+	uid, _ := mc["sub"].(string)
+	if uid == "" {
+		return "", errors.New("no subject")
+	}
+	// Optional but recommended: honor exp if present
+	if exp, ok := mc["exp"].(float64); ok && time.Now().Unix() > int64(exp) {
+		return "", errors.New("token expired")
+	}
+	return uid, nil
+}
 
 internal/shared/redisx/redisx.go
 package redisx

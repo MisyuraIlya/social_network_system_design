@@ -1,7 +1,7 @@
 # Project code dump
 
-- Generated: 2025-10-16 16:53:32+0300
-- Root: `/home/ilya/projects/social_network_system_design/services/feed-service`
+- Generated: 2025-10-17 11:12:52+0300
+- Root: `/home/spetsar/projects/social_network_system_design/services/feed-service`
 
 cmd/app/main.go
 package main
@@ -16,6 +16,7 @@ import (
 
 	"feed-service/internal/feed"
 	"feed-service/internal/kafka"
+	"feed-service/internal/ratelimit"
 	"feed-service/internal/shared/httpx"
 	"feed-service/internal/shared/redisx"
 
@@ -80,15 +81,28 @@ func main() {
 		_ = shutdown(c)
 	}()
 
+	// Redis
 	rdb := redisx.OpenFromEnv()
 	defer func(rdb *redis.Client) { _ = rdb.Close() }(rdb)
 
+	// Rate limiter (Redis-backed)
+	limiter := ratelimit.New(rdb)
+	rebuildLimit := func(next http.Handler) http.Handler {
+		return limiter.LimitHTTP(1, 60*time.Second, func(r *http.Request) (string, error) {
+			return httpx.UserFromCtx(r)
+		}, next)
+	}
+
+	// Repo & Service
 	repo := feed.NewRepository(rdb)
-	svc := feed.NewService(repo,
+	svc := feed.NewService(
+		repo,
 		feed.WithUserServiceBase(os.Getenv("USER_SERVICE_URL")),
+		feed.WithPostServiceBase(os.Getenv("POST_SERVICE_URL")), // optional enrichment endpoint
 		feed.WithDefaultFeedLimit(atoiDef(os.Getenv("FEED_DEFAULT_LIMIT"), 100)),
 	)
 
+	// Kafka consumer
 	bootstrap := os.Getenv("KAFKA_BOOTSTRAP_SERVERS")
 	if bootstrap == "" {
 		bootstrap = "kafka:9092"
@@ -123,9 +137,8 @@ func main() {
 		mux.Handle(pattern, httpx.AuthMiddleware(handler))
 	}
 	protect("GET /feed", httpx.Wrap(h.GetHomeFeed))
-	protect("POST /feed/rebuild", httpx.Wrap(h.RebuildHomeFeed))
+	protect("POST /feed/rebuild", rebuildLimit(httpx.Wrap(h.RebuildHomeFeed)))
 
-	// Manage celebrity set (keep behind auth; later you can gate with roles/claims)
 	protect("POST /celebrities/{user_id}", httpx.Wrap(h.PromoteCelebrity))
 	protect("DELETE /celebrities/{user_id}", httpx.Wrap(h.DemoteCelebrity))
 
@@ -275,7 +288,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
+	"os"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -285,12 +301,9 @@ const (
 	keyAuthorPostsFmt = "author_posts:%s"
 	keyUsersFeedFmt   = "users_feed:%s"
 	keyCelebFeedFmt   = "celebrities_feed:%s"
-
-	// set storing celebrity user IDs
-	keyCelebSet = "celebrities:set"
-
-	maxPerAuthor = 500
-	maxHomeSize  = 1000
+	keyCelebSet       = "celebrities:set"
+	maxPerAuthor      = 500
+	maxHomeSize       = 1000
 )
 
 type Repository interface {
@@ -317,6 +330,26 @@ func (r *repo) authorKey(uid string) string    { return fmt.Sprintf(keyAuthorPos
 func (r *repo) userFeedKey(uid string) string  { return fmt.Sprintf(keyUsersFeedFmt, uid) }
 func (r *repo) celebFeedKey(uid string) string { return fmt.Sprintf(keyCelebFeedFmt, uid) }
 
+var (
+	weightLikes = getenvFloat("FEED_SCORE_WEIGHT_LIKES", 3600)
+	weightViews = getenvFloat("FEED_SCORE_WEIGHT_VIEWS", 60)
+)
+
+func getenvFloat(k string, def float64) float64 {
+	if s := os.Getenv(k); s != "" {
+		if v, err := strconv.ParseFloat(s, 64); err == nil {
+			return v
+		}
+	}
+	return def
+}
+
+func computeScore(createdAt time.Time, likes, views int64) float64 {
+	base := float64(createdAt.Unix())
+	eng := weightLikes*math.Log1p(float64(likes)) + weightViews*math.Log1p(float64(views))
+	return base + eng
+}
+
 func (r *repo) HandlePostEvent(ctx context.Context, ev PostEvent) error {
 	entry := FeedEntry{
 		PostID:    ev.ID,
@@ -325,16 +358,14 @@ func (r *repo) HandlePostEvent(ctx context.Context, ev PostEvent) error {
 		Snippet:   ev.Description,
 		Tags:      ev.Tags,
 		CreatedAt: ev.CreatedAt,
-		Score:     float64(ev.CreatedAt.Unix()),
+		Score:     computeScore(ev.CreatedAt, ev.Likes, ev.Views),
 	}
 	b, _ := json.Marshal(entry)
 
 	pipe := r.rdb.TxPipeline()
-	// Always append to author feed
 	pipe.LPush(ctx, r.authorKey(ev.UserID), b)
 	pipe.LTrim(ctx, r.authorKey(ev.UserID), 0, maxPerAuthor-1)
 
-	// If author is a celebrity, append to celebrity feed as well
 	isCeleb, err := r.IsCelebrity(ctx, ev.UserID)
 	if err == nil && isCeleb {
 		pipe.LPush(ctx, r.celebFeedKey(ev.UserID), b)
@@ -439,6 +470,7 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -457,6 +489,7 @@ type Service interface {
 type service struct {
 	repo             Repository
 	userSvcBase      string
+	postSvcBase      string
 	defaultFeedLimit int
 	httpClient       *http.Client
 }
@@ -468,6 +501,10 @@ func WithUserServiceBase(base string) Option {
 }
 func WithDefaultFeedLimit(n int) Option {
 	return func(s *service) { s.defaultFeedLimit = n }
+}
+
+func WithPostServiceBase(base string) Option {
+	return func(s *service) { s.postSvcBase = base }
 }
 
 func NewService(r Repository, opts ...Option) Service {
@@ -538,6 +575,13 @@ func (s *service) RebuildHomeFeed(ctx context.Context, userID, bearer string, li
 		if e == nil && len(ents) > 0 {
 			all = append(all, ents...)
 		}
+		// If Redis feed for this author is too small, backfill via post-service
+		if len(ents) < perAuthor {
+			more, e2 := s.fetchAuthorRecentPosts(ctx2, authorID, perAuthor-len(ents), bearer)
+			if e2 == nil && len(more) > 0 {
+				all = append(all, more...)
+			}
+		}
 	}
 
 	sort.Slice(all, func(i, j int) bool { return all[i].Score > all[j].Score })
@@ -545,6 +589,46 @@ func (s *service) RebuildHomeFeed(ctx context.Context, userID, bearer string, li
 		all = all[:limit]
 	}
 	return s.repo.StoreHomeFeed(ctx, userID, all)
+}
+
+func (s *service) fetchAuthorRecentPosts(ctx context.Context, authorID string, limit int, bearer string) ([]FeedEntry, error) {
+	if s.postSvcBase == "" {
+		return nil, nil
+	}
+	req, _ := http.NewRequestWithContext(ctx, "GET",
+		fmt.Sprintf("%s/users/%s/posts?limit=%d&offset=0", s.postSvcBase, authorID, limit), nil)
+
+	// If the post-service requires auth for user routes, pass through the caller's bearer
+	if strings.TrimSpace(bearer) != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("post-service status %d", resp.StatusCode)
+	}
+
+	var pl postListResp
+	if err := json.NewDecoder(resp.Body).Decode(&pl); err != nil {
+		return nil, err
+	}
+
+	out := make([]FeedEntry, 0, len(pl.Items))
+	for _, p := range pl.Items {
+		out = append(out, FeedEntry{
+			PostID:    p.ID,
+			AuthorID:  p.UserID,
+			MediaURL:  p.Media,
+			Snippet:   p.Description,
+			CreatedAt: p.CreatedAt,
+			Score:     float64(p.CreatedAt.Unix()),
+		})
+	}
+	return out, nil
 }
 
 // ---- Celebrities ----
@@ -579,6 +663,16 @@ type PostEvent struct {
 	CreatedAt   time.Time `json:"created_at"`
 	Likes       int64     `json:"likes,omitempty"`
 	Views       int64     `json:"views,omitempty"`
+}
+
+type postListResp struct {
+	Items []struct {
+		ID          int64     `json:"id"`
+		UserID      string    `json:"user_id"`
+		Description string    `json:"description"`
+		Media       string    `json:"media"`
+		CreatedAt   time.Time `json:"created_at"`
+	} `json:"items"`
 }
 
 type FeedEntry struct {
@@ -637,6 +731,59 @@ func StartConsumer(ctx context.Context, bootstrap, topic, groupID string, handle
 	}
 }
 
+internal/ratelimit/ratelimit.go
+package ratelimit
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"time"
+
+	"feed-service/internal/shared/httpx"
+
+	"github.com/redis/go-redis/v9"
+)
+
+type Limiter struct{ R *redis.Client }
+
+func New(r *redis.Client) *Limiter { return &Limiter{R: r} }
+
+func (l *Limiter) AllowSliding(ctx context.Context, key string, limit int64, window time.Duration) (bool, int64, error) {
+	k := "rl:" + key
+	pipe := l.R.TxPipeline()
+	incr := pipe.Incr(ctx, k)
+	pipe.Expire(ctx, k, window)
+	_, err := pipe.Exec(ctx)
+	if err != nil {
+		return false, 0, err
+	}
+	n := incr.Val()
+	return n <= limit, n, nil
+}
+
+func (l *Limiter) LimitHTTP(limit int64, window time.Duration, keyFn func(*http.Request) (string, error), next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		key, err := keyFn(r)
+		if err != nil || key == "" {
+			httpx.WriteError(w, http.StatusUnauthorized, httpx.ErrUnauthorized, "missing_user")
+			return
+		}
+		ok, n, e := l.AllowSliding(r.Context(), key, limit, window)
+		if e != nil {
+			httpx.WriteError(w, http.StatusTooManyRequests, fmt.Errorf("rate limiter error"), "rate_limiter_error")
+			return
+		}
+		if !ok {
+			httpx.WriteError(w, http.StatusTooManyRequests,
+				fmt.Errorf("rate limit exceeded (count=%d, limit=%d)", n, limit),
+				"rate_limited")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 internal/shared/httpx/httpx.go
 package httpx
 
@@ -653,6 +800,30 @@ import (
 
 type HandlerFunc func(http.ResponseWriter, *http.Request) error
 
+type APIError struct {
+	Error  string `json:"error"`
+	Reason string `json:"reason,omitempty"`
+	Status int    `json:"status"`
+}
+
+var (
+	ctxUserIDKey    = "httpx.user_id"
+	ErrUnauthorized = errors.New("unauthorized")
+)
+
+func WriteJSON(w http.ResponseWriter, v any, code int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+func WriteError(w http.ResponseWriter, status int, err error, reason string) {
+	if err == nil {
+		err = errors.New(http.StatusText(status))
+	}
+	WriteJSON(w, APIError{Error: err.Error(), Reason: reason, Status: status}, status)
+}
+
 func Wrap(fn HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := fn(w, r); err != nil {
@@ -660,7 +831,7 @@ func Wrap(fn HandlerFunc) http.Handler {
 			if errors.Is(err, ErrUnauthorized) {
 				code = http.StatusUnauthorized
 			}
-			WriteJSON(w, map[string]any{"error": err.Error()}, code)
+			WriteError(w, code, err, "")
 		}
 	})
 }
@@ -671,16 +842,9 @@ func Decode[T any](r *http.Request) (T, error) {
 	return t, err
 }
 
-func WriteJSON(w http.ResponseWriter, v any, code int) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(v)
+func WriteBadRequest(w http.ResponseWriter, err error, reason string) {
+	WriteError(w, http.StatusBadRequest, err, reason)
 }
-
-var (
-	ctxUserIDKey    = "httpx.user_id"
-	ErrUnauthorized = errors.New("unauthorized")
-)
 
 func BearerToken(r *http.Request) string {
 	h := r.Header.Get("Authorization")
@@ -694,12 +858,12 @@ func AuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		tok := BearerToken(r)
 		if tok == "" {
-			WriteJSON(w, map[string]any{"error": "unauthorized", "reason": "missing bearer"}, http.StatusUnauthorized)
+			WriteError(w, http.StatusUnauthorized, ErrUnauthorized, "missing_bearer")
 			return
 		}
 		uid, err := jwt.Parse(tok)
 		if err != nil || uid == "" {
-			WriteJSON(w, map[string]any{"error": "unauthorized", "reason": "bad token"}, http.StatusUnauthorized)
+			WriteError(w, http.StatusUnauthorized, ErrUnauthorized, "invalid_token")
 			return
 		}
 		ctx := context.WithValue(r.Context(), ctxUserIDKey, uid)

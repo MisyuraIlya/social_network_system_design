@@ -1,7 +1,7 @@
 # Project code dump
 
-- Generated: 2025-10-16 16:53:32+0300
-- Root: `/home/ilya/projects/social_network_system_design/services/message-service`
+- Generated: 2025-10-17 11:12:52+0300
+- Root: `/home/spetsar/projects/social_network_system_design/services/message-service`
 
 cmd/app/main.go
 package main
@@ -15,10 +15,12 @@ import (
 	"time"
 
 	"message-service/internal/chat"
+	"message-service/internal/idem"
 	"message-service/internal/kafka"
 	"message-service/internal/media"
 	"message-service/internal/message"
 	"message-service/internal/migrate"
+	"message-service/internal/ratelimit"
 	"message-service/internal/redisx"
 	"message-service/internal/shared/db"
 	"message-service/internal/shared/httpx"
@@ -83,66 +85,69 @@ func main() {
 		_ = shutdown(c)
 	}()
 
-	// Postgres
 	store := db.OpenFromEnv()
 
-	// Redis
 	rds := redisx.NewClientFromEnv()
 
-	// Kafka producer
+	limiter := ratelimit.New(rds)
+	idemStore := idem.New(rds)
+
 	kWriter, err := kafka.NewWriter(os.Getenv("KAFKA_BOOTSTRAP_SERVERS"), "messages.created")
 	if err != nil {
 		log.Fatalf("kafka writer: %v", err)
 	}
 	defer kWriter.Close()
 
-	// Media client
 	mediaCli := media.New(os.Getenv("MEDIA_SERVICE_URL"))
 
-	// Auto-migrate schema
 	if os.Getenv("AUTO_MIGRATE") == "true" {
 		if err := migrate.AutoMigrateAll(store); err != nil {
 			log.Fatalf("migrate: %v", err)
 		}
 	}
 
-	// Wire repos & services
 	chatRepo := chat.NewRepository(store)
 	chatSvc := chat.NewService(chatRepo, rds)
 
 	msgRepo := message.NewRepository(store)
 	msgSvc := message.NewService(msgRepo, chatSvc, rds, kWriter, mediaCli)
 
-	// HTTP
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.Handler())
 
-	// Public (lookups)
 	ch := chat.NewHandler(chatSvc)
-	mh := message.NewHandler(msgSvc)
+	mh := message.NewHandler(msgSvc).WithIdem(idemStore)
 
 	mux.Handle("GET /chats/{chat_id}", httpx.Wrap(ch.GetByID))
 
-	// Protected
 	protect := func(pattern string, h http.Handler) {
 		mux.Handle(pattern, httpx.AuthMiddleware(h))
 	}
 
+	sendLimit := func(next http.Handler) http.Handler {
+		return limiter.LimitHTTP(20, 10*time.Second, func(r *http.Request) (string, error) {
+			return httpx.UserFromCtx(r)
+		}, next)
+	}
+	readLimit := func(next http.Handler) http.Handler {
+		return limiter.LimitHTTP(60, 10*time.Second, func(r *http.Request) (string, error) {
+			return httpx.UserFromCtx(r)
+		}, next)
+	}
+
 	// Chats
-	protect("POST /chats", httpx.Wrap(ch.Create))                          // create chat (1:1 or group)
-	protect("GET /chats", httpx.Wrap(ch.ListMine))                         // list my chats
-	protect("POST /chats/{chat_id}/join", httpx.Wrap(ch.Join))             // join (add self)
-	protect("POST /chats/{chat_id}/add/{user_id}", httpx.Wrap(ch.AddUser)) // add someone
-	protect("POST /chats/{chat_id}/leave", httpx.Wrap(ch.Leave))           // leave chat
-	mux.Handle("GET /chats/popular", httpx.Wrap(ch.Popular))               // read-only, from Redis
+	protect("POST /chats", httpx.Wrap(ch.Create))
+	protect("GET /chats", httpx.Wrap(ch.ListMine))
+	protect("POST /chats/{chat_id}/join", httpx.Wrap(ch.Join))
+	protect("POST /chats/{chat_id}/add/{user_id}", httpx.Wrap(ch.AddUser))
+	protect("POST /chats/{chat_id}/leave", httpx.Wrap(ch.Leave))
+	mux.Handle("GET /chats/popular", httpx.Wrap(ch.Popular))
 
-	// Messages
-	protect("GET /chats/{chat_id}/messages", httpx.Wrap(mh.ListByChat)) // history
-	protect("POST /messages", httpx.Wrap(mh.Send))                      // text-only
-	protect("POST /messages/upload", httpx.Wrap(mh.UploadAndSend))      // upload media + send
-	protect("POST /messages/{message_id}/seen", httpx.Wrap(mh.MarkSeen))
+	protect("GET /chats/{chat_id}/messages", readLimit(httpx.Wrap(mh.ListByChat)))
+	protect("POST /messages", sendLimit(httpx.Wrap(mh.Send)))
+	protect("POST /messages/upload", sendLimit(httpx.Wrap(mh.UploadAndSend)))
+	protect("POST /messages/{message_id}/seen", readLimit(httpx.Wrap(mh.MarkSeen)))
 
-	// Health/info
 	protect("GET /whoami", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		uid, err := httpx.UserFromCtx(r)
 		if err != nil {
@@ -338,6 +343,7 @@ type Repository interface {
 	AddUser(chatID int64, userID, typ string) error
 	RemoveUser(chatID int64, userID string) error
 	ListByUser(userID string, limit, offset int) ([]Chat, error)
+	IsMember(chatID int64, userID string) (bool, error)
 }
 
 type repo struct{ store *db.Store }
@@ -376,9 +382,20 @@ func (r *repo) ListByUser(userID string, limit, offset int) ([]Chat, error) {
 	var out []Chat
 	err := r.store.Base.
 		Joins("JOIN chat_users cu ON cu.chat_id = chats.id AND cu.user_id = ?", userID).
-		Order("chats.created_at DESC").Limit(limit).Offset(offset).
+		Order("created_at DESC").Limit(limit).Offset(offset).
 		Find(&out).Error
 	return out, err
+}
+
+func (r *repo) IsMember(chatID int64, userID string) (bool, error) {
+	var n int64
+	if err := r.store.Base.
+		Model(&ChatUser{}).
+		Where("chat_id = ? AND user_id = ?", chatID, userID).
+		Count(&n).Error; err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 var _ = gorm.ErrRecordNotFound
@@ -401,6 +418,9 @@ type Service interface {
 	ListMine(userID string, limit, offset int) ([]Chat, error)
 	IncPopular(ctx context.Context, chatID int64)
 	TopPopular(ctx context.Context, n int64) ([]int64, error)
+
+	// NEW:
+	IsMember(chatID int64, userID string) (bool, error)
 }
 
 type service struct {
@@ -441,11 +461,43 @@ func (s *service) TopPopular(ctx context.Context, n int64) ([]int64, error) {
 	return s.rds.TopPopular(ctx, n)
 }
 
+func (s *service) IsMember(chatID int64, userID string) (bool, error) {
+	return s.repo.IsMember(chatID, userID)
+}
+
+internal/idem/idem.go
+package idem
+
+import (
+	"context"
+	"time"
+
+	"message-service/internal/redisx"
+
+	"github.com/redis/go-redis/v9"
+)
+
+type Store interface {
+	PutNX(ctx context.Context, key string, ttl time.Duration) (bool, error)
+}
+
+type redisStore struct{ r *redis.Client }
+
+func New(rdb *redisx.Client) Store {
+	return &redisStore{r: rdb.R}
+}
+
+func (s *redisStore) PutNX(ctx context.Context, key string, ttl time.Duration) (bool, error) {
+	return s.r.SetNX(ctx, "idem:"+key, "1", ttl).Result()
+}
+
 internal/kafka/writer.go
 package kafka
 
 import (
 	"context"
+	"os"
+	"strings"
 	"time"
 
 	k "github.com/segmentio/kafka-go"
@@ -455,15 +507,43 @@ type Writer struct {
 	w *k.Writer
 }
 
+// NewWriter creates a Kafka writer with configurable durability.
+//
+// Env overrides (optional):
+//   - KAFKA_BOOTSTRAP_SERVERS: "host1:9092,host2:9092" (fallback to arg, then "kafka:9092")
+//   - KAFKA_REQUIRED_ACKS: "none" | "one" | "all" (default: "one")
+//   - KAFKA_ASYNC: "true" | "false" (default: "false")
 func NewWriter(bootstrap, topic string) (*Writer, error) {
+	if bootstrap == "" {
+		bootstrap = os.Getenv("KAFKA_BOOTSTRAP_SERVERS")
+	}
+	if strings.TrimSpace(bootstrap) == "" {
+		bootstrap = "kafka:9092"
+	}
+
+	acks := strings.ToLower(strings.TrimSpace(os.Getenv("KAFKA_REQUIRED_ACKS")))
+	var requiredAcks k.RequiredAcks
+	switch acks {
+	case "none":
+		requiredAcks = k.RequireNone
+	case "all":
+		requiredAcks = k.RequireAll
+	default:
+		// safer default: wait for leader ack
+		requiredAcks = k.RequireOne
+	}
+
+	async := strings.EqualFold(os.Getenv("KAFKA_ASYNC"), "true")
+
 	w := &k.Writer{
 		Addr:         k.TCP(bootstrap),
 		Topic:        topic,
 		Balancer:     &k.LeastBytes{},
 		BatchTimeout: 50 * time.Millisecond,
-		RequiredAcks: k.RequireNone,
-		Async:        true,
+		RequiredAcks: requiredAcks,
+		Async:        async,
 	}
+
 	return &Writer{w: w}, nil
 }
 
@@ -531,20 +611,31 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"time"
 
+	"message-service/internal/idem"
 	"message-service/internal/shared/httpx"
 	"message-service/internal/shared/validate"
 )
 
-type Handler struct{ svc Service }
+type Handler struct {
+	svc  Service
+	idem idem.Store
+}
 
 func NewHandler(s Service) *Handler { return &Handler{svc: s} }
+
+func (h *Handler) WithIdem(s idem.Store) *Handler {
+	h.idem = s
+	return h
+}
 
 func (h *Handler) Send(w http.ResponseWriter, r *http.Request) error {
 	uid, err := httpx.UserFromCtx(r)
 	if err != nil {
 		return err
 	}
+
 	in, err := httpx.Decode[SendReq](r)
 	if err != nil {
 		return err
@@ -552,6 +643,20 @@ func (h *Handler) Send(w http.ResponseWriter, r *http.Request) error {
 	if err := validate.Struct(in); err != nil {
 		return err
 	}
+
+	if h.idem != nil {
+		if key := r.Header.Get("Idempotency-Key"); key != "" {
+			ok, e := h.idem.PutNX(r.Context(), "send:"+uid+":"+strconv.FormatInt(in.ChatID, 10)+":"+key, 24*time.Hour)
+			if e != nil {
+				return e
+			}
+			if !ok {
+				httpx.WriteJSON(w, map[string]any{"error": "duplicate request"}, http.StatusConflict)
+				return nil
+			}
+		}
+	}
+
 	m, err := h.svc.Send(r.Context(), uid, in)
 	if err != nil {
 		return err
@@ -573,10 +678,25 @@ func (h *Handler) UploadAndSend(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	defer f.Close()
+
 	data, _ := io.ReadAll(f)
 	chatID, _ := strconv.ParseInt(r.FormValue("chat_id"), 10, 64)
 	text := r.FormValue("text")
 	bearer := httpx.BearerToken(r)
+
+	if h.idem != nil {
+		if key := r.Header.Get("Idempotency-Key"); key != "" {
+			ok, e := h.idem.PutNX(r.Context(), "send-upload:"+uid+":"+strconv.FormatInt(chatID, 10)+":"+key, 24*time.Hour)
+			if e != nil {
+				return e
+			}
+			if !ok {
+				httpx.WriteJSON(w, map[string]any{"error": "duplicate request"}, http.StatusConflict)
+				return nil
+			}
+		}
+	}
+
 	m, err := h.svc.SendWithUpload(r.Context(), uid, chatID, fh.Filename, data, text, bearer)
 	if err != nil {
 		return err
@@ -586,14 +706,15 @@ func (h *Handler) UploadAndSend(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (h *Handler) ListByChat(w http.ResponseWriter, r *http.Request) error {
-	_, err := httpx.UserFromCtx(r)
+	uid, err := httpx.UserFromCtx(r)
 	if err != nil {
 		return err
 	}
 	cid, _ := strconv.ParseInt(r.PathValue("chat_id"), 10, 64)
 	limit := qint(r, "limit", 50)
 	offset := qint(r, "offset", 0)
-	items, err := h.svc.ListByChat(cid, limit, offset)
+
+	items, err := h.svc.ListByChat(uid, cid, limit, offset)
 	if err != nil {
 		return err
 	}
@@ -637,7 +758,6 @@ type Message struct {
 	ChatID        int64     `gorm:"index" json:"chat_id"`
 	Text          string    `json:"text"`
 	MediaURL      string    `gorm:"size:512" json:"media_url"`
-	IsSeen        bool      `json:"is_seen"`
 	SendTime      time.Time `json:"send_time"`
 	DeliveredTime time.Time `json:"delivered_time"`
 }
@@ -669,6 +789,9 @@ type Repository interface {
 	Create(m *Message) (*Message, error)
 	MarkSeen(messageID int64, userID string) error
 	ListByChat(chatID int64, limit, offset int) ([]Message, error)
+
+	// NEW:
+	GetByID(messageID int64) (*Message, error)
 }
 
 type repo struct{ store *db.Store }
@@ -705,12 +828,21 @@ func (r *repo) ListByChat(chatID int64, limit, offset int) ([]Message, error) {
 	return out, err
 }
 
+func (r *repo) GetByID(messageID int64) (*Message, error) {
+	var m Message
+	if err := r.store.Base.First(&m, "id = ?", messageID).Error; err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
+
 internal/message/service.go
 package message
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strconv"
 	"time"
 
@@ -724,7 +856,7 @@ type Service interface {
 	Send(ctx context.Context, userID string, in SendReq) (*Message, error)
 	SendWithUpload(ctx context.Context, userID string, chatID int64, fileName string, fileData []byte, text string, bearer string) (*Message, error)
 	MarkSeen(messageID int64, userID string) error
-	ListByChat(chatID int64, limit, offset int) ([]Message, error)
+	ListByChat(userID string, chatID int64, limit, offset int) ([]Message, error)
 }
 
 type service struct {
@@ -739,14 +871,23 @@ func NewService(r Repository, cs chat.Service, rds *redisx.Client, kw *kafka.Wri
 	return &service{repo: r, chats: cs, rds: rds, kafka: kw, media: mc}
 }
 
+var errForbidden = errors.New("forbidden") // simple sentinel
+
 func (s *service) Send(ctx context.Context, userID string, in SendReq) (*Message, error) {
-	// ensure chat exists
 	if _, err := s.chats.GetByID(in.ChatID); err != nil {
 		return nil, err
 	}
+	if ok, err := s.chats.IsMember(in.ChatID, userID); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, errForbidden
+	}
+
 	m := &Message{
-		UserID: userID, ChatID: in.ChatID,
-		Text: in.Text, MediaURL: in.MediaURL,
+		UserID:   userID,
+		ChatID:   in.ChatID,
+		Text:     in.Text,
+		MediaURL: in.MediaURL,
 		SendTime: time.Now(),
 	}
 	res, err := s.repo.Create(m)
@@ -754,7 +895,6 @@ func (s *service) Send(ctx context.Context, userID string, in SendReq) (*Message
 		return nil, err
 	}
 
-	// side effects: popularity + kafka event
 	s.chats.IncPopular(ctx, in.ChatID)
 	_ = s.emit(res)
 
@@ -762,6 +902,16 @@ func (s *service) Send(ctx context.Context, userID string, in SendReq) (*Message
 }
 
 func (s *service) SendWithUpload(ctx context.Context, userID string, chatID int64, fileName string, data []byte, text string, bearer string) (*Message, error) {
+	// ensure chat exists
+	if _, err := s.chats.GetByID(chatID); err != nil {
+		return nil, err
+	}
+	if ok, err := s.chats.IsMember(chatID, userID); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, errForbidden
+	}
+
 	url, err := s.media.Upload("file", fileName, bytesReader(data), bearer)
 	if err != nil {
 		return nil, err
@@ -770,10 +920,24 @@ func (s *service) SendWithUpload(ctx context.Context, userID string, chatID int6
 }
 
 func (s *service) MarkSeen(messageID int64, userID string) error {
+	m, err := s.repo.GetByID(messageID)
+	if err != nil {
+		return err
+	}
+	if ok, err := s.chats.IsMember(m.ChatID, userID); err != nil {
+		return err
+	} else if !ok {
+		return errForbidden
+	}
 	return s.repo.MarkSeen(messageID, userID)
 }
 
-func (s *service) ListByChat(chatID int64, limit, offset int) ([]Message, error) {
+func (s *service) ListByChat(userID string, chatID int64, limit, offset int) ([]Message, error) {
+	if ok, err := s.chats.IsMember(chatID, userID); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, errForbidden
+	}
 	return s.repo.ListByChat(chatID, limit, offset)
 }
 
@@ -811,6 +975,60 @@ func AutoMigrateAll(store *db.Store) error {
 		&message.Message{},
 		&message.MessageSeen{},
 	)
+}
+
+internal/ratelimit/ratelimit.go
+package ratelimit
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"time"
+
+	"message-service/internal/redisx"
+	"message-service/internal/shared/httpx"
+)
+
+type Limiter struct {
+	R *redisx.Client
+}
+
+func New(r *redisx.Client) *Limiter { return &Limiter{R: r} }
+
+func (l *Limiter) AllowSliding(ctx context.Context, key string, limit int64, window time.Duration) (bool, int64, error) {
+	k := "rl:" + key
+	pipe := l.R.R.TxPipeline()
+	incr := pipe.Incr(ctx, k)
+	pipe.Expire(ctx, k, window)
+	_, err := pipe.Exec(ctx)
+	if err != nil {
+		return false, 0, err
+	}
+	n := incr.Val()
+	return n <= limit, n, nil
+}
+
+func (l *Limiter) LimitHTTP(limit int64, window time.Duration, keyFn func(*http.Request) (string, error), next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		key, err := keyFn(r)
+		if err != nil || key == "" {
+			httpx.WriteError(w, http.StatusUnauthorized, httpx.ErrUnauthorized, "missing_user")
+			return
+		}
+		ok, n, e := l.AllowSliding(r.Context(), key, limit, window)
+		if e != nil {
+			httpx.WriteError(w, http.StatusTooManyRequests, fmt.Errorf("rate limiter error"), "rate_limiter_error")
+			return
+		}
+		if !ok {
+			httpx.WriteError(w, http.StatusTooManyRequests,
+				fmt.Errorf("rate limit exceeded (count=%d, limit=%d)", n, limit),
+				"rate_limited")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 internal/redisx/cache.go
@@ -961,6 +1179,30 @@ import (
 
 type HandlerFunc func(http.ResponseWriter, *http.Request) error
 
+type APIError struct {
+	Error  string `json:"error"`
+	Reason string `json:"reason,omitempty"`
+	Status int    `json:"status"`
+}
+
+var (
+	ctxUserIDKey    = "httpx.user_id"
+	ErrUnauthorized = errors.New("unauthorized")
+)
+
+func WriteJSON(w http.ResponseWriter, v any, code int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+func WriteError(w http.ResponseWriter, status int, err error, reason string) {
+	if err == nil {
+		err = errors.New(http.StatusText(status))
+	}
+	WriteJSON(w, APIError{Error: err.Error(), Reason: reason, Status: status}, status)
+}
+
 func Wrap(fn HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := fn(w, r); err != nil {
@@ -968,7 +1210,7 @@ func Wrap(fn HandlerFunc) http.Handler {
 			if errors.Is(err, ErrUnauthorized) {
 				code = http.StatusUnauthorized
 			}
-			WriteJSON(w, map[string]any{"error": err.Error()}, code)
+			WriteError(w, code, err, "")
 		}
 	})
 }
@@ -979,10 +1221,8 @@ func Decode[T any](r *http.Request) (T, error) {
 	return t, err
 }
 
-func WriteJSON(w http.ResponseWriter, v any, code int) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(v)
+func WriteBadRequest(w http.ResponseWriter, err error, reason string) {
+	WriteError(w, http.StatusBadRequest, err, reason)
 }
 
 func BearerToken(r *http.Request) string {
@@ -993,22 +1233,17 @@ func BearerToken(r *http.Request) string {
 	return ""
 }
 
-var (
-	ctxUserIDKey    = "httpx.user_id"
-	ErrUnauthorized = errors.New("unauthorized")
-)
-
 func AuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := r.Header.Get("Authorization")
 		if !strings.HasPrefix(h, "Bearer ") {
-			WriteJSON(w, map[string]any{"error": "unauthorized", "reason": "missing bearer"}, http.StatusUnauthorized)
+			WriteError(w, http.StatusUnauthorized, ErrUnauthorized, "missing_bearer")
 			return
 		}
 		tok := strings.TrimSpace(h[7:])
 		uid, err := jwt.Parse(tok)
 		if err != nil || uid == "" {
-			WriteJSON(w, map[string]any{"error": "unauthorized", "reason": "bad token"}, http.StatusUnauthorized)
+			WriteError(w, http.StatusUnauthorized, ErrUnauthorized, "invalid_token")
 			return
 		}
 		ctx := context.WithValue(r.Context(), ctxUserIDKey, uid)

@@ -1,9 +1,10 @@
 # Project code dump
 
-- Generated: 2025-10-16 16:53:31+0300
-- Root: `/home/ilya/projects/social_network_system_design/services/feedback-service`
+- Generated: 2025-10-17 11:12:51+0300
+- Root: `/home/spetsar/projects/social_network_system_design/services/feedback-service`
 
 cmd/app/main.go
+// services/feedback-service/cmd/app/main.go
 package main
 
 import (
@@ -14,6 +15,7 @@ import (
 	"feedback-gateway/internal/shared/db"
 	"feedback-gateway/internal/shared/httpx"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -30,14 +32,6 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
 )
-
-func atoiDef(s string, def int) int {
-	n, err := strconv.Atoi(s)
-	if err != nil || n <= 0 {
-		return def
-	}
-	return n
-}
 
 func initOTEL(ctx context.Context) func(context.Context) error {
 	endpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
@@ -84,8 +78,10 @@ func main() {
 	store := db.OpenFromEnv()
 
 	// Redis
+	rHost := envOr("REDIS_HOST", "redis-feedback")
+	rPort := envOr("REDIS_PORT", "6379")
 	rdb := redis.NewClient(&redis.Options{
-		Addr:     os.Getenv("REDIS_HOST") + ":" + os.Getenv("REDIS_PORT"),
+		Addr:     net.JoinHostPort(rHost, rPort),
 		Password: "",
 		DB:       0,
 	})
@@ -93,7 +89,6 @@ func main() {
 		log.Fatalf("redis ping: %v", err)
 	}
 
-	// Auto migrate
 	if os.Getenv("AUTO_MIGRATE") == "true" {
 		if err := migrate.AutoMigrateAll(store); err != nil {
 			log.Fatalf("migrate: %v", err)
@@ -148,6 +143,13 @@ func main() {
 	}
 	log.Printf("feedback-service listening on %s", addr)
 	log.Fatal(srv.ListenAndServe())
+}
+
+func envOr(k, def string) string {
+	if v := os.Getenv(k); v != "" {
+		return v
+	}
+	return def
 }
 
 internal/comment/comment.go
@@ -575,6 +577,59 @@ func AutoMigrateAll(store *db.Store) error {
 	)
 }
 
+internal/ratelimit/ratelimit.go
+package ratelimit
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"time"
+
+	"feedback-gateway/internal/shared/httpx"
+
+	"github.com/redis/go-redis/v9"
+)
+
+type Limiter struct{ R *redis.Client }
+
+func New(r *redis.Client) *Limiter { return &Limiter{R: r} }
+
+func (l *Limiter) AllowSliding(ctx context.Context, key string, limit int64, window time.Duration) (bool, int64, error) {
+	k := "rl:" + key
+	pipe := l.R.TxPipeline()
+	incr := pipe.Incr(ctx, k)
+	pipe.Expire(ctx, k, window)
+	_, err := pipe.Exec(ctx)
+	if err != nil {
+		return false, 0, err
+	}
+	n := incr.Val()
+	return n <= limit, n, nil
+}
+
+func (l *Limiter) LimitHTTP(limit int64, window time.Duration, keyFn func(*http.Request) (string, error), next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		key, err := keyFn(r)
+		if err != nil || key == "" {
+			httpx.WriteError(w, http.StatusUnauthorized, httpx.ErrUnauthorized, "missing_user")
+			return
+		}
+		ok, n, e := l.AllowSliding(r.Context(), key, limit, window)
+		if e != nil {
+			httpx.WriteError(w, http.StatusTooManyRequests, fmt.Errorf("rate limiter error"), "rate_limiter_error")
+			return
+		}
+		if !ok {
+			httpx.WriteError(w, http.StatusTooManyRequests,
+				fmt.Errorf("rate limit exceeded (count=%d, limit=%d)", n, limit),
+				"rate_limited")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 internal/shared/db/db.go
 package db
 
@@ -639,6 +694,30 @@ import (
 
 type HandlerFunc func(http.ResponseWriter, *http.Request) error
 
+type APIError struct {
+	Error  string `json:"error"`
+	Reason string `json:"reason,omitempty"`
+	Status int    `json:"status"`
+}
+
+var (
+	ctxUserIDKey    = "httpx.user_id"
+	ErrUnauthorized = errors.New("unauthorized")
+)
+
+func WriteJSON(w http.ResponseWriter, v any, code int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+func WriteError(w http.ResponseWriter, status int, err error, reason string) {
+	if err == nil {
+		err = errors.New(http.StatusText(status))
+	}
+	WriteJSON(w, APIError{Error: err.Error(), Reason: reason, Status: status}, status)
+}
+
 func Wrap(fn HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := fn(w, r); err != nil {
@@ -646,7 +725,7 @@ func Wrap(fn HandlerFunc) http.Handler {
 			if errors.Is(err, ErrUnauthorized) {
 				code = http.StatusUnauthorized
 			}
-			WriteJSON(w, map[string]any{"error": err.Error()}, code)
+			WriteError(w, code, err, "")
 		}
 	})
 }
@@ -657,28 +736,17 @@ func Decode[T any](r *http.Request) (T, error) {
 	return t, err
 }
 
-func WriteJSON(w http.ResponseWriter, v any, code int) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(v)
-}
-
-var (
-	ctxUserIDKey    = "httpx.user_id"
-	ErrUnauthorized = errors.New("unauthorized")
-)
-
 func AuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := r.Header.Get("Authorization")
 		if !strings.HasPrefix(h, "Bearer ") {
-			WriteJSON(w, map[string]any{"error": "unauthorized", "reason": "missing bearer"}, http.StatusUnauthorized)
+			WriteError(w, http.StatusUnauthorized, ErrUnauthorized, "missing_bearer")
 			return
 		}
 		tok := strings.TrimSpace(h[7:])
 		uid, err := jwt.Parse(tok)
 		if err != nil || uid == "" {
-			WriteJSON(w, map[string]any{"error": "unauthorized", "reason": "bad token"}, http.StatusUnauthorized)
+			WriteError(w, http.StatusUnauthorized, ErrUnauthorized, "invalid_token")
 			return
 		}
 		ctx := context.WithValue(r.Context(), ctxUserIDKey, uid)
@@ -692,6 +760,14 @@ func UserFromCtx(r *http.Request) (string, error) {
 		return "", ErrUnauthorized
 	}
 	return uid, nil
+}
+
+func BearerToken(r *http.Request) string {
+	h := r.Header.Get("Authorization")
+	if strings.HasPrefix(h, "Bearer ") {
+		return strings.TrimSpace(h[7:])
+	}
+	return ""
 }
 
 func QueryInt(r *http.Request, key string, def int) int {

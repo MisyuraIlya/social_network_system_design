@@ -1,7 +1,7 @@
 # Project code dump
 
-- Generated: 2025-10-16 16:53:32+0300
-- Root: `/home/ilya/projects/social_network_system_design/services/post-service`
+- Generated: 2025-10-17 11:12:53+0300
+- Root: `/home/spetsar/projects/social_network_system_design/services/post-service`
 
 cmd/app/main.go
 package main
@@ -340,7 +340,9 @@ func (h *Handler) UploadAndCreate(w http.ResponseWriter, r *http.Request) error 
 		tags = nil
 	}
 
-	p, err := h.svc.UploadAndCreate(uid, hdr.Filename, file, description, tags)
+	bearer := httpx.BearerToken(r)
+
+	p, err := h.svc.UploadAndCreate(uid, hdr.Filename, file, description, tags, bearer)
 	if err != nil {
 		return err
 	}
@@ -505,6 +507,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"post-service/internal/kafka"
@@ -517,7 +520,7 @@ type Service interface {
 	GetByID(id uint64) (*Post, error)
 	ListByUser(userID string, limit, offset int) ([]Post, error)
 	AddView(postID uint64) error
-	UploadAndCreate(uid string, filename string, file io.Reader, description string, tags []string) (*Post, error)
+	UploadAndCreate(uid string, filename string, file io.Reader, description string, tags []string, bearer string) (*Post, error)
 }
 
 type service struct {
@@ -574,15 +577,15 @@ func (s *service) ListByUser(userID string, limit, offset int) ([]Post, error) {
 
 func (s *service) AddView(postID uint64) error { return s.repo.IncView(postID) }
 
-func (s *service) UploadAndCreate(uid, filename string, file io.Reader, description string, tags []string) (*Post, error) {
-	mediaURL, err := uploadToMediaService(filename, file)
+func (s *service) UploadAndCreate(uid, filename string, file io.Reader, description string, tags []string, bearer string) (*Post, error) {
+	mediaURL, err := uploadToMediaService(filename, file, bearer)
 	if err != nil {
 		return nil, err
 	}
 	return s.Create(uid, CreateReq{Description: description, MediaURL: mediaURL, Tags: tags})
 }
 
-func uploadToMediaService(filename string, r io.Reader) (string, error) {
+func uploadToMediaService(filename string, r io.Reader, bearer string) (string, error) {
 	base := os.Getenv("MEDIA_SERVICE_URL")
 	if base == "" {
 		base = "http://media-service:8088"
@@ -597,6 +600,9 @@ func uploadToMediaService(filename string, r io.Reader) (string, error) {
 
 	req, _ := http.NewRequest("POST", fmt.Sprintf("%s/media/upload", base), &body)
 	req.Header.Set("Content-Type", w.FormDataContentType())
+	if strings.TrimSpace(bearer) != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -708,6 +714,31 @@ import (
 
 type HandlerFunc func(http.ResponseWriter, *http.Request) error
 
+// ---------- Standard error shape ----------
+type APIError struct {
+	Error  string `json:"error"`
+	Reason string `json:"reason,omitempty"`
+	Status int    `json:"status"`
+}
+
+var (
+	ctxUserIDKey    = "httpx.user_id"
+	ErrUnauthorized = errors.New("unauthorized")
+)
+
+func WriteJSON(w http.ResponseWriter, v any, code int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+func WriteError(w http.ResponseWriter, status int, err error, reason string) {
+	if err == nil {
+		err = errors.New(http.StatusText(status))
+	}
+	WriteJSON(w, APIError{Error: err.Error(), Reason: reason, Status: status}, status)
+}
+
 func Wrap(fn HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := fn(w, r); err != nil {
@@ -715,7 +746,7 @@ func Wrap(fn HandlerFunc) http.Handler {
 			if errors.Is(err, ErrUnauthorized) {
 				code = http.StatusUnauthorized
 			}
-			WriteJSON(w, map[string]any{"error": err.Error()}, code)
+			WriteError(w, code, err, "")
 		}
 	})
 }
@@ -726,28 +757,17 @@ func Decode[T any](r *http.Request) (T, error) {
 	return t, err
 }
 
-func WriteJSON(w http.ResponseWriter, v any, code int) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(v)
-}
-
-var (
-	ctxUserIDKey    = "httpx.user_id"
-	ErrUnauthorized = errors.New("unauthorized")
-)
-
 func AuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := r.Header.Get("Authorization")
 		if !strings.HasPrefix(h, "Bearer ") {
-			WriteJSON(w, map[string]any{"error": "unauthorized", "reason": "missing bearer"}, http.StatusUnauthorized)
+			WriteError(w, http.StatusUnauthorized, ErrUnauthorized, "missing_bearer")
 			return
 		}
 		tok := strings.TrimSpace(h[7:])
 		uid, _, err := jwt.Parse(tok)
 		if err != nil || uid == "" {
-			WriteJSON(w, map[string]any{"error": "unauthorized", "reason": "bad token"}, http.StatusUnauthorized)
+			WriteError(w, http.StatusUnauthorized, ErrUnauthorized, "invalid_token")
 			return
 		}
 		ctx := context.WithValue(r.Context(), ctxUserIDKey, uid)
@@ -761,6 +781,14 @@ func UserFromCtx(r *http.Request) (string, error) {
 		return "", ErrUnauthorized
 	}
 	return uid, nil
+}
+
+func BearerToken(r *http.Request) string {
+	h := r.Header.Get("Authorization")
+	if strings.HasPrefix(h, "Bearer ") {
+		return strings.TrimSpace(h[7:])
+	}
+	return ""
 }
 
 func QueryInt(r *http.Request, key string, def int) int {
