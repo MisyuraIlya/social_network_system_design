@@ -1,5 +1,6 @@
-here my db diagrams 
-feed service cache.dbml: 
+here my db diagrams:
+feed service cahce.dbml:
+
 // Service: feed-service (Redis-backed)
 // Storage model (from code):
 // - author_posts:{user_id}     -> LIST of FeedEntry (max 500)
@@ -44,7 +45,6 @@ Table celebrities {
 //   created_at timestamp
 //   score     double
 // }
-
 
 feedback service database.dbml
 // Service: feedback-service
@@ -99,7 +99,7 @@ Table post_comments {
 /* Top-level refs (DBML requires this): */
 Ref: post_comments.reply_id > post_comments.id
 
-message service database.dbml:
+message service database.dbml
 // Service: message-service
 // Replication: master-master (async slaves), RF=3
 // Sharding: key-based by chat_id (conceptual; single DB in this service code)
@@ -168,8 +168,7 @@ Ref: messages.id < message_seen.message_id
 // users.user_id > messages.user_id
 // users.user_id > message_seen.user_id
 
-
-post service database.dbml:
+post service database.dbml
 // Service: post-service
 // Replication: master-slave (async), RF=3
 // Notes: Likes & comments live in feedback-service; media URL only
@@ -211,8 +210,7 @@ Table posts_tags {
 Ref: posts.id < posts_tags.post_id
 Ref: tags.id  < posts_tags.tag_id
 
-
-users service database.dbml
+user service database.dbml
 // Service: user-service
 // Replication: master-slave (async), RF=3
 // Sharding: key-based by user_id (user_id encodes shard id like "shard-uuid")
@@ -324,8 +322,8 @@ Ref: users.user_id  < relationships.user_id
 Ref: users.user_id  < relationships.related_id
 
 
-here now c4 designs
-c1 level:
+here c4 designs 
+here c1 level design:
 @startuml
 !include <C4/C4_Container>
 
@@ -359,30 +357,28 @@ Rel(mediaService, s3, "Uploads media files")
 Rel(cdn, s3, "Downloads media from origin s3")
 @enduml
 
-here the c2 level services:
-
+here c2 level design services
 feed service:
 @startuml
 !include <C4/C4_Container>
 
 Container(apiGateway, "API Gateway")
-Container(kafka, "Kafka", "message queue", "includes posts for creating a home and user feed")
-Container(postService, "Post Service", "")
-Container(userService, "User Service", "")
+Container(kafka, "Kafka", "message queue", "posts.created events")
+Container(postService, "Post Service", "author posts API")
+Container(userService, "User Service", "relationships API")
 
 System_Boundary(feedSystem, "Feed Service") {
-    Container(feedService, "Feed Service", "Processes posts")
-    ContainerDb(redis, "redis", "store posts")
+    Container(feedService, "Feed Service", "Consumes Kafka; stores feeds in Redis; enriches via post-service on rebuild")
+    ContainerDb(redis, "Redis", "author/user/celebrity feeds")
 }
 
 Rel(apiGateway, feedService, "request", "REST")
-Rel(feedService, redis, "store feeds")
-Rel(feedService, kafka, "get posts")
-Rel(feedService, postService, "get more posts")
-Rel(feedService, userService, "get followers, friedns...")
-
-
+Rel(kafka, feedService, "consume posts.created")
+Rel(feedService, redis, "read/write feeds")
+Rel(feedService, userService, "get relationships (followers/friends)")
+Rel(feedService, postService, "fetch recent posts for authors (enrichment)")
 @enduml
+
 
 feedback service:
 @startuml
@@ -420,28 +416,27 @@ Rel(cdn, s3, "Downloads media from origin s3")
 @enduml
 
 message service:
+
 @startuml
 !include <C4/C4_Container>
 
 Container(apiGateway, "API Gateway")
 Container(kafka, "Kafka", "")
-Container(s3, "MediaService", "")
-Container(notifycationService, "Notification service", "")
-
+Container(mediaService, "Media Service", "Uploads/serves media via REST")
+Container(notificationService, "Notification Service", "")
 
 System_Boundary(MessageSystem, "Message Service") {
     Container(MessageService, "Message Service", "Processes messages")
-    ContainerDb(redis, "redis")
-    ContainerDb(pgSQL, "pgSQL")
+    ContainerDb(redis, "Redis")
+    ContainerDb(pgSQL, "PostgreSQL")
 }
 
 Rel(apiGateway, MessageService, "request", "REST")
 Rel(MessageService, redis, "store popular chats")
 Rel(MessageService, pgSQL, "store messages")
-Rel(MessageService, s3, "upload media")
-Rel(MessageService, kafka, "new message")
-Rel(kafka, notifycationService, "")
-
+Rel(MessageService, mediaService, "upload media", "REST")
+Rel(MessageService, kafka, "publish: messages.created")
+Rel(kafka, notificationService, "consume: messages.created")
 
 @enduml
 
@@ -465,7 +460,6 @@ Rel(postService, mediaService, "upload media")
 @enduml
 
 user service:
-
 @startuml
 !include <C4/C4_Container>
 

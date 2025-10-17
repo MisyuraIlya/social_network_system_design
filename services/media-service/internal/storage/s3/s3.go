@@ -68,6 +68,6 @@ func (s *Storage) PresignGet(ctx context.Context, key string, ttl time.Duration)
 	return s.client.PresignedGetObject(ctx, s.cfg.Bucket, key, ttl, nil)
 }
 
-func (s *Storage) PresignPut(ctx context.Context, key string, ttl time.Duration, contentType string) (*url.URL, error) {
+func (s *Storage) PresignPut(ctx context.Context, key string, ttl time.Duration, _ string) (*url.URL, error) {
 	return s.client.PresignedPutObject(ctx, s.cfg.Bucket, key, ttl)
 }

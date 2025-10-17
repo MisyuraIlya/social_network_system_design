@@ -33,9 +33,8 @@ Table messages {
   chat_id        bigint       [not null]
   text           text
   media_url      varchar(512)
-  is_seen        boolean      [not null, default: false]
   send_time      timestamp    [not null]             // set by service
-  delivered_time timestamp                     
+  delivered_time timestamp
 
   indexes {
     chat_id           [name: 'idx_messages_chat']

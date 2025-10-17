@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"gorm.io/gorm"
 )
 
 type HandlerFunc func(http.ResponseWriter, *http.Request) error
@@ -42,6 +44,8 @@ func Wrap(fn HandlerFunc) http.Handler {
 			code := http.StatusBadRequest
 			if errors.Is(err, ErrUnauthorized) {
 				code = http.StatusUnauthorized
+			} else if errors.Is(err, gorm.ErrRecordNotFound) {
+				code = http.StatusNotFound
 			}
 			WriteError(w, code, err, "")
 		}

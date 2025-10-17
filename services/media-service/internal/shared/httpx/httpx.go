@@ -38,9 +38,10 @@ func WriteError(w http.ResponseWriter, status int, err error, reason string) {
 
 func AuthMiddleware(next http.Handler) http.Handler {
 	secret := os.Getenv("JWT_SECRET")
+	allowDev := strings.EqualFold(os.Getenv("ALLOW_DEV_NOAUTH"), "true")
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if secret == "" {
-			// dev mode: attach dummy uid "0"
+		if allowDev && secret == "" {
+			// explicit dev bypass only when ALLOW_DEV_NOAUTH=true
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userKey, "0")))
 			return
 		}

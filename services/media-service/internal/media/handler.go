@@ -43,9 +43,10 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 	}
 	url, _ := h.svc.s3.PresignGet(r.Context(), key, 15*time.Minute)
 	httpx.WriteJSON(w, map[string]any{
-		"key":         key,
-		"contentType": ct,
-		"url":         url.String(),
+		"key":              key,
+		"contentType":      ct,
+		"url":              url.String(),
+		"required_headers": map[string]string{"Content-Type": ct},
 	}, http.StatusCreated)
 }
 
@@ -108,9 +109,10 @@ func (h *Handler) PresignPut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, map[string]any{
-		"key":    body.Key,
-		"url":    u.String(),
-		"ttl":    body.ExpirySec,
-		"method": "PUT",
+		"key":              body.Key,
+		"url":              u.String(),
+		"ttl":              body.ExpirySec,
+		"method":           "PUT",
+		"required_headers": map[string]string{"Content-Type": body.ContentType},
 	}, http.StatusOK)
 }

@@ -16,8 +16,8 @@ type Store struct{ Base *gorm.DB }
 
 func OpenFromEnv() *Store {
 	host := def(os.Getenv("DB_HOST"), "message-db")
-	user := def(os.Getenv("DB_USER"), "notify")
-	pass := def(os.Getenv("DB_PASSWORD"), "notifypass")
+	user := def(os.Getenv("DB_USER"), "message")
+	pass := def(os.Getenv("DB_PASSWORD"), "messagepass")
 	name := def(os.Getenv("DB_NAME"), "message_db")
 	port := def(os.Getenv("DB_PORT"), "5432")
 
