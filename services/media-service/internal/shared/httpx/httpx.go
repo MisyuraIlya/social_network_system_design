@@ -54,3 +54,11 @@ func UserFromCtx(r *http.Request) (string, error) {
 	}
 	return v, nil
 }
+
+func BearerToken(r *http.Request) string {
+	h := r.Header.Get("Authorization")
+	if strings.HasPrefix(h, "Bearer ") {
+		return strings.TrimSpace(h[7:])
+	}
+	return ""
+}

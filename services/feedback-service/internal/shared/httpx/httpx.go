@@ -67,6 +67,14 @@ func UserFromCtx(r *http.Request) (string, error) {
 	return uid, nil
 }
 
+func BearerToken(r *http.Request) string {
+	h := r.Header.Get("Authorization")
+	if strings.HasPrefix(h, "Bearer ") {
+		return strings.TrimSpace(h[7:])
+	}
+	return ""
+}
+
 func QueryInt(r *http.Request, key string, def int) int {
 	s := r.URL.Query().Get(key)
 	if s == "" {

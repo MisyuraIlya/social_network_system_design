@@ -37,14 +37,6 @@ func WriteJSON(w http.ResponseWriter, v any, code int) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-func BearerToken(r *http.Request) string {
-	h := r.Header.Get("Authorization")
-	if strings.HasPrefix(h, "Bearer ") {
-		return strings.TrimSpace(h[7:])
-	}
-	return ""
-}
-
 var (
 	ctxUserIDKey    = "httpx.user_id"
 	ErrUnauthorized = errors.New("unauthorized")
@@ -74,6 +66,14 @@ func UserFromCtx(r *http.Request) (string, error) {
 		return "", ErrUnauthorized
 	}
 	return uid, nil
+}
+
+func BearerToken(r *http.Request) string {
+	h := r.Header.Get("Authorization")
+	if strings.HasPrefix(h, "Bearer ") {
+		return strings.TrimSpace(h[7:])
+	}
+	return ""
 }
 
 func QueryInt(r *http.Request, key string, def int) int {
