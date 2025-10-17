@@ -71,3 +71,5 @@ Fix (if you care about durability): Use RequireOne (or RequireAll) and/or sync m
 track read receipts in message_seen, but never flip is_seen. Two choices:
 
 Remove is_seen (avoid dual sources of truth)
+
+11. feed-service scoring ignores engagement Score = created_at only.  already have Likes/Views in PostEvent—unused. Fix (later): Blend likes/views and decay (e.g., score = ts + α*likes + β*views - decay(t)), or compute in repo when storing.

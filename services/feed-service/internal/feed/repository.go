@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
+	"os"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -14,12 +17,9 @@ const (
 	keyAuthorPostsFmt = "author_posts:%s"
 	keyUsersFeedFmt   = "users_feed:%s"
 	keyCelebFeedFmt   = "celebrities_feed:%s"
-
-	// set storing celebrity user IDs
-	keyCelebSet = "celebrities:set"
-
-	maxPerAuthor = 500
-	maxHomeSize  = 1000
+	keyCelebSet       = "celebrities:set"
+	maxPerAuthor      = 500
+	maxHomeSize       = 1000
 )
 
 type Repository interface {
@@ -46,6 +46,26 @@ func (r *repo) authorKey(uid string) string    { return fmt.Sprintf(keyAuthorPos
 func (r *repo) userFeedKey(uid string) string  { return fmt.Sprintf(keyUsersFeedFmt, uid) }
 func (r *repo) celebFeedKey(uid string) string { return fmt.Sprintf(keyCelebFeedFmt, uid) }
 
+var (
+	weightLikes = getenvFloat("FEED_SCORE_WEIGHT_LIKES", 3600)
+	weightViews = getenvFloat("FEED_SCORE_WEIGHT_VIEWS", 60)
+)
+
+func getenvFloat(k string, def float64) float64 {
+	if s := os.Getenv(k); s != "" {
+		if v, err := strconv.ParseFloat(s, 64); err == nil {
+			return v
+		}
+	}
+	return def
+}
+
+func computeScore(createdAt time.Time, likes, views int64) float64 {
+	base := float64(createdAt.Unix())
+	eng := weightLikes*math.Log1p(float64(likes)) + weightViews*math.Log1p(float64(views))
+	return base + eng
+}
+
 func (r *repo) HandlePostEvent(ctx context.Context, ev PostEvent) error {
 	entry := FeedEntry{
 		PostID:    ev.ID,
@@ -54,16 +74,14 @@ func (r *repo) HandlePostEvent(ctx context.Context, ev PostEvent) error {
 		Snippet:   ev.Description,
 		Tags:      ev.Tags,
 		CreatedAt: ev.CreatedAt,
-		Score:     float64(ev.CreatedAt.Unix()),
+		Score:     computeScore(ev.CreatedAt, ev.Likes, ev.Views),
 	}
 	b, _ := json.Marshal(entry)
 
 	pipe := r.rdb.TxPipeline()
-	// Always append to author feed
 	pipe.LPush(ctx, r.authorKey(ev.UserID), b)
 	pipe.LTrim(ctx, r.authorKey(ev.UserID), 0, maxPerAuthor-1)
 
-	// If author is a celebrity, append to celebrity feed as well
 	isCeleb, err := r.IsCelebrity(ctx, ev.UserID)
 	if err == nil && isCeleb {
 		pipe.LPush(ctx, r.celebFeedKey(ev.UserID), b)
