@@ -8,7 +8,6 @@ type Message struct {
 	ChatID        int64     `gorm:"index" json:"chat_id"`
 	Text          string    `json:"text"`
 	MediaURL      string    `gorm:"size:512" json:"media_url"`
-	IsSeen        bool      `json:"is_seen"`
 	SendTime      time.Time `json:"send_time"`
 	DeliveredTime time.Time `json:"delivered_time"`
 }

@@ -65,3 +65,9 @@ message-service writer: RequiredAcks: RequireNone, Async: true → higher throug
 Fix (if you care about durability): Use RequireOne (or RequireAll) and/or sync mode for user messages. Keep feed/post event producer decisions explicit.
 
 9. media-service S3 PresignPut You build reqParams with content-type but don’t pass it (MinIO’s PresignedPutObject doesn’t take that arg anyway). Not harmful; just remove dead code or add a comment.
+
+10. message-service messages.is_seen column
+
+track read receipts in message_seen, but never flip is_seen. Two choices:
+
+Remove is_seen (avoid dual sources of truth)
