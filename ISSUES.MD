@@ -75,3 +75,7 @@ Remove is_seen (avoid dual sources of truth)
 11. feed-service scoring ignores engagement Score = created_at only.  already have Likes/Views in PostEvent—unused. Fix (later): Blend likes/views and decay (e.g., score = ts + α*likes + β*views - decay(t)), or compute in repo when storing.
 
 12. Standardize httpx.BearerToken helper
+
+13. Consistent error shapes
+
+Some middlewares produce {error, reason}, some just {error}. Consider a small shared package or guideline for uniform API errors (helps clients & observability).
