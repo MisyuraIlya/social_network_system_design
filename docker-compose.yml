@@ -658,7 +658,6 @@ services:
       - "80:80"
     volumes:
       - ./services/api-gateway/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./services/api-gateway/api-gateway.conf:/etc/nginx/conf.d/api-gateway.conf:ro
     networks:
       socialnet: {}
 
